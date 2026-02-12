@@ -1,5 +1,6 @@
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
+import { PRIORITY_CONFIG } from './types';
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -87,4 +88,18 @@ export function generateGoogleCalendarUrl(title: string, content: string, dueDat
   });
 
   return `https://www.google.com/calendar/render?${params.toString()}`;
+}
+
+// Helper to get numeric weight for priority
+export function getPriorityWeight(categoryLabel: string): number {
+  if (categoryLabel === PRIORITY_CONFIG.urgent.label) return 3;
+  if (categoryLabel === PRIORITY_CONFIG.important.label) return 2;
+  if (categoryLabel === PRIORITY_CONFIG.normal.label) return 1;
+  return 0;
+}
+
+// Helper to check if a task is "Critical" (Overdue or Due Today)
+export function isCriticalTask(dueDate: string, status: string): boolean {
+  if (status === 'done') return false;
+  return isOverdue(dueDate, status) || isToday(dueDate);
 }

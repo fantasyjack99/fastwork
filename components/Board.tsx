@@ -18,14 +18,14 @@ import {
   verticalListSortingStrategy,
   arrayMove,
 } from '@dnd-kit/sortable';
-import { Task, Column as ColumnType, User, TaskStatus } from '../types';
+import { Task, Column as ColumnType, User, TaskStatus, PRIORITY_CONFIG } from '../types';
 import { TaskCard } from './TaskCard';
 import { TaskModal } from './TaskModal';
-import { ArchiveModal } from './ArchiveModal'; // Import new modal
-import { Plus, LogOut, Layout, Archive } from 'lucide-react';
+import { ArchiveModal } from './ArchiveModal';
+import { Plus, LogOut, Layout, Archive, Filter, ListFilter } from 'lucide-react';
 import { Button } from './Button';
 import { createPortal } from 'react-dom';
-import { cn } from '../utils';
+import { cn, isOverdue, isToday, getPriorityWeight, isCriticalTask } from '../utils';
 
 // Column Component (Internal to Board to share context easily)
 interface ColumnProps {
@@ -96,6 +96,9 @@ const DEFAULT_COLUMNS: ColumnType[] = [
   { id: 'done', title: '已完成 (Done)' },
 ];
 
+type FilterTime = 'all' | 'overdue' | 'today';
+type FilterPriority = 'all' | 'urgent' | 'important' | 'normal';
+
 export const Board: React.FC<BoardProps> = ({ user, onLogout }) => {
   const [tasks, setTasks] = useState<Task[]>(() => {
     const saved = localStorage.getItem(`micro_kanban_tasks_${user.id}`);
@@ -106,6 +109,10 @@ export const Board: React.FC<BoardProps> = ({ user, onLogout }) => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isArchiveModalOpen, setIsArchiveModalOpen] = useState(false); // Archive Modal State
   const [editingTask, setEditingTask] = useState<Task | null>(null);
+
+  // Filter States
+  const [filterTime, setFilterTime] = useState<FilterTime>('all');
+  const [filterPriority, setFilterPriority] = useState<FilterPriority>('all');
 
   // Sensors for Drag and Drop
   const sensors = useSensors(
@@ -150,7 +157,6 @@ export const Board: React.FC<BoardProps> = ({ user, onLogout }) => {
   };
 
   const handleArchiveTask = (task: Task) => {
-    // Removed window.confirm to ensure the action is immediate and not blocked by browser settings
     setTasks((prev) => 
       prev.map(t => t.id === task.id ? { ...t, isArchived: true } : t)
     );
@@ -177,26 +183,20 @@ export const Board: React.FC<BoardProps> = ({ user, onLogout }) => {
 
     if (!isActiveTask) return;
 
-    // Helper to update status and completion time
+    // Helper to update status
     const updateTaskStatus = (t: Task, newStatus: TaskStatus): Task => {
         const updates: Partial<Task> = { status: newStatus };
-        // If moving to done, set completedAt
         if (newStatus === 'done' && t.status !== 'done') {
             updates.completedAt = new Date().toISOString();
         }
-        // If moving out of done, maybe clear completedAt or keep it? 
-        // Let's keep it as a record of "last completion", or clear it if strict.
-        // For now, let's leave it, but update logic prioritizes status.
         return { ...t, ...updates };
     };
 
-    // Dropping a Task over another Task
     if (isActiveTask && isOverTask) {
       setTasks((tasks) => {
         const activeIndex = tasks.findIndex((t) => t.id === activeId);
         const overIndex = tasks.findIndex((t) => t.id === overId);
         
-        // Use immutable update pattern
         const newTasks = [...tasks];
         const newStatus = newTasks[overIndex].status;
         
@@ -208,7 +208,6 @@ export const Board: React.FC<BoardProps> = ({ user, onLogout }) => {
       });
     }
 
-    // Dropping a Task over a Column (empty area or container)
     const isOverColumn = DEFAULT_COLUMNS.some(col => col.id === overId);
     if (isActiveTask && isOverColumn) {
       setTasks((tasks) => {
@@ -227,15 +226,62 @@ export const Board: React.FC<BoardProps> = ({ user, onLogout }) => {
     setActiveTask(null);
   };
 
-  // Filter out archived tasks for the board view
-  const visibleTasks = useMemo(() => tasks.filter(t => !t.isArchived), [tasks]);
-  // Get archived tasks for the modal
+  // Filter and Sort Logic
+  const visibleTasks = useMemo(() => {
+    // 1. Initial Filter (Not Archived)
+    let filtered = tasks.filter(t => !t.isArchived);
+
+    // 2. Apply Priority Filter
+    if (filterPriority !== 'all') {
+      const targetLabel = PRIORITY_CONFIG[filterPriority].label;
+      filtered = filtered.filter(t => t.category === targetLabel);
+    }
+
+    // 3. Apply Time Filter
+    if (filterTime !== 'all') {
+      if (filterTime === 'overdue') {
+        filtered = filtered.filter(t => isOverdue(t.dueDate, t.status));
+      } else if (filterTime === 'today') {
+        filtered = filtered.filter(t => isToday(t.dueDate));
+      }
+    }
+
+    // 4. Apply Sorting Logic
+    // Rule: Critical (Overdue/Today) > Priority (Urgent>Important>Normal) > DueDate
+    return filtered.sort((a, b) => {
+      const aCritical = isCriticalTask(a.dueDate, a.status);
+      const bCritical = isCriticalTask(b.dueDate, b.status);
+
+      // Status Check: Done items should arguably be at the bottom, but assuming sorting applies mostly to active columns
+      // If one is critical and other is not, critical wins
+      if (aCritical && !bCritical) return -1;
+      if (!aCritical && bCritical) return 1;
+
+      // If both are critical OR both are not critical, compare Priority
+      const aWeight = getPriorityWeight(a.category);
+      const bWeight = getPriorityWeight(b.category);
+
+      if (aWeight !== bWeight) {
+        return bWeight - aWeight; // Higher weight first (3 > 2 > 1)
+      }
+
+      // If Priority is same, compare Due Date (Earliest first)
+      // Empty due date goes last
+      if (!a.dueDate && !b.dueDate) return 0;
+      if (!a.dueDate) return 1;
+      if (!b.dueDate) return -1;
+
+      return new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime();
+    });
+
+  }, [tasks, filterPriority, filterTime]);
+
   const archivedTasks = useMemo(() => tasks.filter(t => t.isArchived), [tasks]);
 
   return (
     <div className="flex flex-col h-screen bg-gray-50 overflow-hidden">
       {/* Header */}
-      <header className="bg-white border-b border-gray-200 px-6 py-3 flex items-center justify-between shadow-sm z-10 shrink-0">
+      <header className="bg-white border-b border-gray-200 px-6 py-3 flex items-center justify-between shadow-sm z-10 shrink-0 flex-wrap gap-3">
         <div className="flex items-center gap-3">
           <div className="p-2 bg-blue-600 rounded-lg text-white">
             <Layout size={20} />
@@ -245,7 +291,44 @@ export const Board: React.FC<BoardProps> = ({ user, onLogout }) => {
             <p className="text-xs text-gray-500">Quick Work Notes</p>
           </div>
         </div>
-        <div className="flex items-center gap-3 sm:gap-4">
+
+        {/* Filter Controls */}
+        <div className="flex items-center gap-2 flex-1 justify-center md:justify-end md:mr-4">
+            <div className="flex items-center bg-gray-100 rounded-md p-1 gap-2">
+                <div className="flex items-center px-2 text-gray-500">
+                    <Filter size={14} className="mr-1.5"/>
+                    <span className="text-xs font-medium">狀態:</span>
+                </div>
+                <select 
+                    value={filterTime} 
+                    onChange={(e) => setFilterTime(e.target.value as FilterTime)}
+                    className="bg-white text-sm border-0 rounded px-2 py-1 focus:ring-2 focus:ring-blue-500 text-gray-700 cursor-pointer"
+                >
+                    <option value="all">全部</option>
+                    <option value="overdue">已逾期</option>
+                    <option value="today">今天到期</option>
+                </select>
+            </div>
+
+            <div className="flex items-center bg-gray-100 rounded-md p-1 gap-2">
+                 <div className="flex items-center px-2 text-gray-500">
+                    <ListFilter size={14} className="mr-1.5"/>
+                    <span className="text-xs font-medium">等級:</span>
+                </div>
+                <select 
+                    value={filterPriority} 
+                    onChange={(e) => setFilterPriority(e.target.value as FilterPriority)}
+                    className="bg-white text-sm border-0 rounded px-2 py-1 focus:ring-2 focus:ring-blue-500 text-gray-700 cursor-pointer"
+                >
+                    <option value="all">全部</option>
+                    <option value="urgent">緊急</option>
+                    <option value="important">重要</option>
+                    <option value="normal">一般</option>
+                </select>
+            </div>
+        </div>
+
+        <div className="flex items-center gap-3 sm:gap-4 border-l pl-4 border-gray-200">
           <Button 
             variant="ghost" 
             size="sm" 
