@@ -125,21 +125,27 @@ export const TaskModal: React.FC<TaskModalProps> = ({
   const calendarUrl = dueDate ? generateGoogleCalendarUrl(title, content, dueDate) : '';
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-      <div className="bg-white rounded-xl shadow-xl w-full max-w-lg overflow-hidden animate-in fade-in zoom-in duration-200">
-        <div className="flex justify-between items-center p-4 border-b">
+    <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/50 backdrop-blur-sm p-0 md:p-4">
+      {/* 
+        Responsive Modal Container:
+        - Mobile: Full width/height (or bottom sheet style), rounded-t-xl only or no rounded
+        - Desktop: Centered, rounded-xl, max width
+      */}
+      <div className="bg-white w-full h-full md:h-auto md:max-w-lg md:rounded-xl shadow-xl overflow-hidden flex flex-col animate-in fade-in slide-in-from-bottom-4 md:slide-in-from-bottom-0 md:zoom-in duration-200">
+        
+        <div className="flex justify-between items-center p-4 border-b shrink-0">
           <h2 className="text-lg font-semibold text-gray-900">
             {initialTask ? '編輯任務' : '新增任務'}
           </h2>
           <button 
             onClick={onClose}
-            className="text-gray-400 hover:text-gray-600 transition-colors"
+            className="text-gray-400 hover:text-gray-600 transition-colors p-1"
           >
-            <X size={20} />
+            <X size={24} />
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="p-6 space-y-4">
+        <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-6 space-y-4">
           <Input
             label="標題"
             value={title}
@@ -267,7 +273,7 @@ export const TaskModal: React.FC<TaskModalProps> = ({
             />
           </div>
 
-          <div className="flex justify-between items-center pt-4 border-t mt-6">
+          <div className="flex justify-between items-center pt-4 border-t mt-6 shrink-0 pb-safe">
             <div>
               {initialTask && onDelete && (
                 <Button
