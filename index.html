@@ -12,7 +12,24 @@
     <style>
       body {
         font-family: 'Noto Sans TC', sans-serif;
-        background-color: #f3f4f6;
+        background-color: #f8fafc; /* Lighter/Cleaner background */
+        overflow: hidden; /* Prevent body scroll, handle inside app */
+      }
+
+      /* Custom Scrollbar */
+      ::-webkit-scrollbar {
+        width: 6px;
+        height: 6px;
+      }
+      ::-webkit-scrollbar-track {
+        background: transparent;
+      }
+      ::-webkit-scrollbar-thumb {
+        background: #cbd5e1;
+        border-radius: 3px;
+      }
+      ::-webkit-scrollbar-thumb:hover {
+        background: #94a3b8;
       }
     </style>
   <script type="importmap">

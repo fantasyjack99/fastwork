@@ -22,12 +22,13 @@ import { Task, Column as ColumnType, User, TaskStatus, PRIORITY_CONFIG } from '.
 import { TaskCard } from './TaskCard';
 import { TaskModal } from './TaskModal';
 import { ArchiveModal } from './ArchiveModal';
-import { Plus, LogOut, Layout, Archive, Filter, ListFilter } from 'lucide-react';
+import { Dashboard } from './Dashboard'; // Import Dashboard
+import { Plus, LogOut, Layout, Archive, Filter, ListFilter, PanelRightClose, PanelRightOpen } from 'lucide-react';
 import { Button } from './Button';
 import { createPortal } from 'react-dom';
 import { cn, isOverdue, isToday, getPriorityWeight, isCriticalTask } from '../utils';
 
-// Column Component (Internal to Board to share context easily)
+// Column Component
 interface ColumnProps {
   column: ColumnType;
   tasks: Task[];
@@ -41,7 +42,6 @@ const Column: React.FC<ColumnProps> = ({ column, tasks, onAddTask, onCardClick, 
     id: column.id,
   });
 
-  // SortableContext needs IDs
   const taskIds = useMemo(() => tasks.map((t) => t.id), [tasks]);
 
   return (
@@ -49,25 +49,33 @@ const Column: React.FC<ColumnProps> = ({ column, tasks, onAddTask, onCardClick, 
       {/* Column Header */}
       <div className="flex items-center justify-between mb-3 px-1">
         <div className="flex items-center gap-2">
-          <h2 className="font-bold text-gray-700 text-lg">{column.title}</h2>
-          <span className="bg-gray-200 text-gray-600 text-xs px-2 py-0.5 rounded-full font-medium">
+          <div className={cn(
+              "w-3 h-3 rounded-full",
+              column.id === 'todo' ? "bg-gray-400" : 
+              column.id === 'doing' ? "bg-blue-500" : "bg-green-500"
+          )} />
+          <h2 className="font-bold text-gray-700 text-lg tracking-tight">{column.title}</h2>
+          <span className="bg-white border border-gray-200 text-gray-500 text-xs px-2 py-0.5 rounded-full font-medium shadow-sm">
             {tasks.length}
           </span>
         </div>
         {column.id === 'todo' && (
            <button 
              onClick={onAddTask}
-             className="text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded p-1 transition-colors"
+             className="text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-md p-1 transition-all active:scale-95"
            >
              <Plus size={20} />
            </button>
         )}
       </div>
 
-      {/* Column Body (Droppable Area) */}
+      {/* Column Body */}
       <div 
         ref={setNodeRef}
-        className="flex-1 bg-gray-100/50 rounded-xl p-2 overflow-y-auto scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-transparent border border-gray-200/60 shadow-inner"
+        className={cn(
+            "flex-1 rounded-xl p-2.5 overflow-y-auto scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-transparent shadow-inner transition-colors",
+            "bg-gray-100/60 border border-gray-200/50" // Softer background
+        )}
       >
         <SortableContext items={taskIds} strategy={verticalListSortingStrategy}>
           {tasks.map((task) => (
@@ -76,8 +84,9 @@ const Column: React.FC<ColumnProps> = ({ column, tasks, onAddTask, onCardClick, 
         </SortableContext>
         
         {tasks.length === 0 && (
-          <div className="h-24 flex items-center justify-center border-2 border-dashed border-gray-200 rounded-lg text-gray-400 text-sm italic">
-            拖曳至此處
+          <div className="h-32 flex flex-col items-center justify-center border-2 border-dashed border-gray-200/80 rounded-lg text-gray-400 text-sm gap-2">
+            <span className="text-3xl opacity-20">+</span>
+            <span className="italic opacity-60">暫無任務</span>
           </div>
         )}
       </div>
@@ -91,9 +100,9 @@ interface BoardProps {
 }
 
 const DEFAULT_COLUMNS: ColumnType[] = [
-  { id: 'todo', title: '待辦事項 (To-do)' },
-  { id: 'doing', title: '進行中 (Doing)' },
-  { id: 'done', title: '已完成 (Done)' },
+  { id: 'todo', title: '待辦事項' },
+  { id: 'doing', title: '進行中' },
+  { id: 'done', title: '已完成' },
 ];
 
 type FilterTime = 'all' | 'overdue' | 'today';
@@ -105,90 +114,58 @@ export const Board: React.FC<BoardProps> = ({ user, onLogout }) => {
     return saved ? JSON.parse(saved) : [];
   });
   
-  const [activeTask, setActiveTask] = useState<Task | null>(null); // For Drag Overlay
+  const [activeTask, setActiveTask] = useState<Task | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [isArchiveModalOpen, setIsArchiveModalOpen] = useState(false); // Archive Modal State
+  const [isArchiveModalOpen, setIsArchiveModalOpen] = useState(false);
   const [editingTask, setEditingTask] = useState<Task | null>(null);
+  const [showDashboard, setShowDashboard] = useState(true); // Toggle dashboard
 
-  // Filter States
   const [filterTime, setFilterTime] = useState<FilterTime>('all');
   const [filterPriority, setFilterPriority] = useState<FilterPriority>('all');
 
-  // Sensors for Drag and Drop
   const sensors = useSensors(
-    useSensor(PointerSensor, {
-      activationConstraint: {
-        distance: 5, // Prevent accidental drags on clicks
-      },
-    }),
-    useSensor(KeyboardSensor, {
-      coordinateGetter: sortableKeyboardCoordinates,
-    })
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
   );
 
-  // Save to local storage whenever tasks change
   React.useEffect(() => {
     localStorage.setItem(`micro_kanban_tasks_${user.id}`, JSON.stringify(tasks));
   }, [tasks, user.id]);
 
-  // Handlers
-  const handleAddTask = () => {
-    setEditingTask(null);
-    setIsModalOpen(true);
-  };
-
-  const handleEditTask = (task: Task) => {
-    setEditingTask(task);
-    setIsModalOpen(true);
-  };
-
+  const handleAddTask = () => { setEditingTask(null); setIsModalOpen(true); };
+  const handleEditTask = (task: Task) => { setEditingTask(task); setIsModalOpen(true); };
+  
   const handleSaveTask = (task: Task) => {
     setTasks((prev) => {
       const exists = prev.find((t) => t.id === task.id);
-      if (exists) {
-        return prev.map((t) => (t.id === task.id ? task : t));
-      }
-      return [...prev, task];
+      return exists ? prev.map((t) => (t.id === task.id ? task : t)) : [...prev, task];
     });
   };
 
-  const handleDeleteTask = (taskId: string) => {
-    setTasks((prev) => prev.filter((t) => t.id !== taskId));
-  };
-
+  const handleDeleteTask = (taskId: string) => { setTasks((prev) => prev.filter((t) => t.id !== taskId)); };
+  
   const handleArchiveTask = (task: Task) => {
-    setTasks((prev) => 
-      prev.map(t => t.id === task.id ? { ...t, isArchived: true } : t)
-    );
+    setTasks((prev) => prev.map(t => t.id === task.id ? { ...t, isArchived: true } : t));
   };
 
-  // Drag and Drop Logic
   const onDragStart = (event: DragStartEvent) => {
-    if (event.active.data.current?.type === 'Task') {
-      setActiveTask(event.active.data.current.task);
-    }
+    if (event.active.data.current?.type === 'Task') setActiveTask(event.active.data.current.task);
   };
 
   const onDragOver = (event: DragOverEvent) => {
     const { active, over } = event;
     if (!over) return;
-
     const activeId = active.id;
     const overId = over.id;
-
     if (activeId === overId) return;
 
     const isActiveTask = active.data.current?.type === 'Task';
     const isOverTask = over.data.current?.type === 'Task';
-
     if (!isActiveTask) return;
 
-    // Helper to update status
     const updateTaskStatus = (t: Task, newStatus: TaskStatus): Task => {
         const updates: Partial<Task> = { status: newStatus };
-        if (newStatus === 'done' && t.status !== 'done') {
-            updates.completedAt = new Date().toISOString();
-        }
+        if (newStatus === 'done' && t.status !== 'done') updates.completedAt = new Date().toISOString();
         return { ...t, ...updates };
     };
 
@@ -196,14 +173,11 @@ export const Board: React.FC<BoardProps> = ({ user, onLogout }) => {
       setTasks((tasks) => {
         const activeIndex = tasks.findIndex((t) => t.id === activeId);
         const overIndex = tasks.findIndex((t) => t.id === overId);
-        
         const newTasks = [...tasks];
         const newStatus = newTasks[overIndex].status;
-        
         if (newTasks[activeIndex].status !== newStatus) {
            newTasks[activeIndex] = updateTaskStatus(newTasks[activeIndex], newStatus);
         }
-
         return arrayMove(newTasks, activeIndex, overIndex);
       });
     }
@@ -222,87 +196,59 @@ export const Board: React.FC<BoardProps> = ({ user, onLogout }) => {
     }
   };
 
-  const onDragEnd = (event: DragEndEvent) => {
-    setActiveTask(null);
-  };
+  const onDragEnd = () => setActiveTask(null);
 
-  // Filter and Sort Logic
   const visibleTasks = useMemo(() => {
-    // 1. Initial Filter (Not Archived)
     let filtered = tasks.filter(t => !t.isArchived);
-
-    // 2. Apply Priority Filter
     if (filterPriority !== 'all') {
       const targetLabel = PRIORITY_CONFIG[filterPriority].label;
       filtered = filtered.filter(t => t.category === targetLabel);
     }
-
-    // 3. Apply Time Filter
     if (filterTime !== 'all') {
-      if (filterTime === 'overdue') {
-        filtered = filtered.filter(t => isOverdue(t.dueDate, t.status));
-      } else if (filterTime === 'today') {
-        filtered = filtered.filter(t => isToday(t.dueDate));
-      }
+      if (filterTime === 'overdue') filtered = filtered.filter(t => isOverdue(t.dueDate, t.status));
+      else if (filterTime === 'today') filtered = filtered.filter(t => isToday(t.dueDate));
     }
-
-    // 4. Apply Sorting Logic
-    // Rule: Critical (Overdue/Today) > Priority (Urgent>Important>Normal) > DueDate
     return filtered.sort((a, b) => {
       const aCritical = isCriticalTask(a.dueDate, a.status);
       const bCritical = isCriticalTask(b.dueDate, b.status);
-
-      // Status Check: Done items should arguably be at the bottom, but assuming sorting applies mostly to active columns
-      // If one is critical and other is not, critical wins
       if (aCritical && !bCritical) return -1;
       if (!aCritical && bCritical) return 1;
-
-      // If both are critical OR both are not critical, compare Priority
       const aWeight = getPriorityWeight(a.category);
       const bWeight = getPriorityWeight(b.category);
-
-      if (aWeight !== bWeight) {
-        return bWeight - aWeight; // Higher weight first (3 > 2 > 1)
-      }
-
-      // If Priority is same, compare Due Date (Earliest first)
-      // Empty due date goes last
+      if (aWeight !== bWeight) return bWeight - aWeight;
       if (!a.dueDate && !b.dueDate) return 0;
       if (!a.dueDate) return 1;
       if (!b.dueDate) return -1;
-
       return new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime();
     });
-
   }, [tasks, filterPriority, filterTime]);
 
   const archivedTasks = useMemo(() => tasks.filter(t => t.isArchived), [tasks]);
 
   return (
-    <div className="flex flex-col h-screen bg-gray-50 overflow-hidden">
+    <div className="flex flex-col h-screen bg-gray-50 overflow-hidden font-sans">
       {/* Header */}
-      <header className="bg-white border-b border-gray-200 px-6 py-3 flex items-center justify-between shadow-sm z-10 shrink-0 flex-wrap gap-3">
+      <header className="bg-white border-b border-gray-200 px-4 py-2.5 flex items-center justify-between shadow-sm z-20 shrink-0">
         <div className="flex items-center gap-3">
-          <div className="p-2 bg-blue-600 rounded-lg text-white">
-            <Layout size={20} />
+          <div className="p-1.5 bg-gradient-to-br from-blue-600 to-blue-700 rounded-lg text-white shadow-md">
+            <Layout size={18} />
           </div>
           <div>
-            <h1 className="font-bold text-gray-900 text-lg leading-tight">快速工作記事</h1>
-            <p className="text-xs text-gray-500">Quick Work Notes</p>
+            <h1 className="font-bold text-gray-800 text-lg leading-tight tracking-tight">Micro Kanban</h1>
           </div>
         </div>
 
         {/* Filter Controls */}
-        <div className="flex items-center gap-2 flex-1 justify-center md:justify-end md:mr-4">
-            <div className="flex items-center bg-gray-100 rounded-md p-1 gap-2">
+        <div className="flex items-center gap-3 flex-1 justify-center md:justify-end md:mr-6">
+            <div className="flex items-center bg-gray-100/80 rounded-lg p-0.5 border border-gray-200">
                 <div className="flex items-center px-2 text-gray-500">
                     <Filter size={14} className="mr-1.5"/>
-                    <span className="text-xs font-medium">狀態:</span>
+                    <span className="text-xs font-medium hidden lg:inline">狀態:</span>
                 </div>
                 <select 
                     value={filterTime} 
                     onChange={(e) => setFilterTime(e.target.value as FilterTime)}
-                    className="bg-white text-sm border-0 rounded px-2 py-1 focus:ring-2 focus:ring-blue-500 text-gray-700 cursor-pointer"
+                    className="bg-transparent text-sm border-0 rounded px-1 py-1 focus:ring-0 text-gray-700 cursor-pointer font-medium"
                 >
                     <option value="all">全部</option>
                     <option value="overdue">已逾期</option>
@@ -310,15 +256,15 @@ export const Board: React.FC<BoardProps> = ({ user, onLogout }) => {
                 </select>
             </div>
 
-            <div className="flex items-center bg-gray-100 rounded-md p-1 gap-2">
+            <div className="flex items-center bg-gray-100/80 rounded-lg p-0.5 border border-gray-200">
                  <div className="flex items-center px-2 text-gray-500">
                     <ListFilter size={14} className="mr-1.5"/>
-                    <span className="text-xs font-medium">等級:</span>
+                    <span className="text-xs font-medium hidden lg:inline">等級:</span>
                 </div>
                 <select 
                     value={filterPriority} 
                     onChange={(e) => setFilterPriority(e.target.value as FilterPriority)}
-                    className="bg-white text-sm border-0 rounded px-2 py-1 focus:ring-2 focus:ring-blue-500 text-gray-700 cursor-pointer"
+                    className="bg-transparent text-sm border-0 rounded px-1 py-1 focus:ring-0 text-gray-700 cursor-pointer font-medium"
                 >
                     <option value="all">全部</option>
                     <option value="urgent">緊急</option>
@@ -328,71 +274,97 @@ export const Board: React.FC<BoardProps> = ({ user, onLogout }) => {
             </div>
         </div>
 
-        <div className="flex items-center gap-3 sm:gap-4 border-l pl-4 border-gray-200">
+        <div className="flex items-center gap-2 border-l pl-3 border-gray-200">
           <Button 
             variant="ghost" 
             size="sm" 
-            className="text-gray-600 hover:text-blue-600"
+            className="text-gray-600 hover:text-blue-600 rounded-full w-8 h-8 p-0 flex items-center justify-center"
             onClick={() => setIsArchiveModalOpen(true)}
+            title="歷史存檔"
           >
-             <Archive size={18} className="mr-1.5" />
-             <span className="hidden sm:inline">完成工作記錄</span>
+             <Archive size={18} />
           </Button>
 
-          <div className="h-8 w-[1px] bg-gray-200 hidden sm:block"></div>
-          
-          <div className="text-right hidden sm:block">
-            <p className="text-sm font-medium text-gray-800">{user.name}</p>
-            <p className="text-xs text-gray-500">{user.email}</p>
-          </div>
-          
-          <Button variant="ghost" onClick={onLogout} size="sm" className="text-gray-500 hover:text-red-600">
-            <LogOut size={18} className="mr-1" />
-            <span className="hidden sm:inline">登出</span>
+          <Button 
+            variant="ghost" 
+            onClick={onLogout} 
+            size="sm" 
+            className="text-gray-400 hover:text-red-600 rounded-full w-8 h-8 p-0 flex items-center justify-center"
+            title="登出"
+          >
+            <LogOut size={18} />
           </Button>
+          
+          {/* Dashboard Toggle (Mobile/Desktop) */}
+          <button 
+             onClick={() => setShowDashboard(!showDashboard)}
+             className={cn(
+               "ml-1 p-1.5 rounded-md transition-colors border",
+               showDashboard ? "bg-blue-50 text-blue-600 border-blue-200" : "bg-white text-gray-500 border-gray-200 hover:bg-gray-50"
+             )}
+             title={showDashboard ? "隱藏儀表板" : "顯示儀表板"}
+          >
+            {showDashboard ? <PanelRightClose size={18} /> : <PanelRightOpen size={18} />}
+          </button>
         </div>
       </header>
 
-      {/* Kanban Board Area */}
-      <main className="flex-1 overflow-x-auto overflow-y-hidden">
-        <DndContext
-          sensors={sensors}
-          collisionDetection={closestCorners}
-          onDragStart={onDragStart}
-          onDragOver={onDragOver}
-          onDragEnd={onDragEnd}
-        >
-          <div className="h-full flex gap-6 p-6 min-w-max">
-             {DEFAULT_COLUMNS.map((col) => (
-                <Column
-                  key={col.id}
-                  column={col}
-                  tasks={visibleTasks.filter((t) => t.status === col.id)}
-                  onAddTask={handleAddTask}
-                  onCardClick={handleEditTask}
-                  onArchive={handleArchiveTask}
-                />
-             ))}
-          </div>
+      {/* Main Content Area */}
+      <div className="flex-1 flex overflow-hidden">
+        
+        {/* Kanban Board Area */}
+        <main className="flex-1 overflow-x-auto overflow-y-hidden bg-white/50 relative">
+            <DndContext
+            sensors={sensors}
+            collisionDetection={closestCorners}
+            onDragStart={onDragStart}
+            onDragOver={onDragOver}
+            onDragEnd={onDragEnd}
+            >
+            <div className="h-full flex gap-4 p-4 lg:p-6 min-w-max">
+                {DEFAULT_COLUMNS.map((col) => (
+                    <Column
+                    key={col.id}
+                    column={col}
+                    tasks={visibleTasks.filter((t) => t.status === col.id)}
+                    onAddTask={handleAddTask}
+                    onCardClick={handleEditTask}
+                    onArchive={handleArchiveTask}
+                    />
+                ))}
+            </div>
 
-          {createPortal(
-            <DragOverlay>
-              {activeTask && (
-                <div className="opacity-90 rotate-2 scale-105 cursor-grabbing w-[300px]">
-                   <TaskCard task={activeTask} onClick={() => {}} />
-                </div>
-              )}
-            </DragOverlay>,
-            document.body
-          )}
-        </DndContext>
-      </main>
+            {createPortal(
+                <DragOverlay>
+                {activeTask && (
+                    <div className="opacity-90 rotate-2 scale-105 cursor-grabbing w-[300px]">
+                    <TaskCard task={activeTask} onClick={() => {}} />
+                    </div>
+                )}
+                </DragOverlay>,
+                document.body
+            )}
+            </DndContext>
+        </main>
+
+        {/* Right Dashboard Panel */}
+        <div 
+            className={cn(
+                "bg-white border-l border-gray-200 transition-all duration-300 ease-in-out overflow-hidden shadow-xl z-10",
+                showDashboard ? "w-[320px] translate-x-0 opacity-100" : "w-0 translate-x-[20px] opacity-0"
+            )}
+        >
+            <div className="h-full w-[320px] overflow-y-auto p-5 scrollbar-thin">
+                <Dashboard tasks={tasks} userName={user.name} />
+            </div>
+        </div>
+      </div>
 
       {/* Floating Action Button for Mobile */}
-      <div className="fixed bottom-6 right-6 sm:hidden">
+      <div className="fixed bottom-6 right-6 sm:hidden z-30">
         <button
           onClick={handleAddTask}
-          className="bg-blue-600 hover:bg-blue-700 text-white rounded-full p-4 shadow-lg transition-transform hover:scale-105 active:scale-95"
+          className="bg-blue-600 hover:bg-blue-700 text-white rounded-full p-4 shadow-lg transition-transform hover:scale-105 active:scale-95 flex items-center justify-center"
         >
           <Plus size={24} />
         </button>

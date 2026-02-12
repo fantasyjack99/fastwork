@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { X, Trash2, Calendar, ExternalLink } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { X, Trash2, Calendar, ExternalLink, Clock } from 'lucide-react';
 import { Task, PRIORITY_CONFIG, PriorityKey, TaskStatus } from '../types';
 import { Button } from './Button';
 import { Input } from './Input';
@@ -15,6 +15,10 @@ interface TaskModalProps {
   defaultStatus?: TaskStatus;
 }
 
+// Time Constants
+const HOURS = Array.from({ length: 24 }, (_, i) => i.toString().padStart(2, '0'));
+const MINUTES = ['00', '10', '20', '30', '40', '50'];
+
 export const TaskModal: React.FC<TaskModalProps> = ({
   isOpen,
   onClose,
@@ -27,27 +31,70 @@ export const TaskModal: React.FC<TaskModalProps> = ({
   const [title, setTitle] = useState('');
   const [content, setContent] = useState('');
   const [priorityKey, setPriorityKey] = useState<PriorityKey>('normal');
-  const [dueDate, setDueDate] = useState('');
+  
+  // Date/Time Split State
+  const [dueDate, setDueDate] = useState(''); // The final ISO string
+  const [datePart, setDatePart] = useState('');
+  const [hourPart, setHourPart] = useState('09');
+  const [minutePart, setMinutePart] = useState('00');
 
+  const dateInputRef = useRef<HTMLInputElement>(null);
+
+  // Initialize State when modal opens or task changes
   useEffect(() => {
     if (initialTask) {
       setTitle(initialTask.title);
       setContent(initialTask.content);
       
-      // Try to match existing category to a priority key, default to normal if not found
       const foundKey = (Object.keys(PRIORITY_CONFIG) as PriorityKey[]).find(
         key => PRIORITY_CONFIG[key].label === initialTask.category
       );
       setPriorityKey(foundKey || 'normal');
       
-      setDueDate(initialTask.dueDate ? new Date(initialTask.dueDate).toISOString().slice(0, 16) : '');
+      if (initialTask.dueDate) {
+        const d = new Date(initialTask.dueDate);
+        // Format YYYY-MM-DD for date input
+        const y = d.getFullYear();
+        const m = (d.getMonth() + 1).toString().padStart(2, '0');
+        const day = d.getDate().toString().padStart(2, '0');
+        setDatePart(`${y}-${m}-${day}`);
+
+        // Set Hours
+        setHourPart(d.getHours().toString().padStart(2, '0'));
+
+        // Set Minutes (Round down to nearest 10 for safety, though UI enforces it)
+        const min = d.getMinutes();
+        const roundedMin = Math.floor(min / 10) * 10;
+        setMinutePart(roundedMin.toString().padStart(2, '0'));
+        
+        setDueDate(initialTask.dueDate);
+      } else {
+        setDatePart('');
+        setHourPart('09');
+        setMinutePart('00');
+        setDueDate('');
+      }
     } else {
       setTitle('');
       setContent('');
       setPriorityKey('normal');
+      setDatePart('');
+      setHourPart('09');
+      setMinutePart('00');
       setDueDate('');
     }
   }, [initialTask, isOpen]);
+
+  // Sync date/time parts to final dueDate string
+  useEffect(() => {
+    if (!datePart) {
+      setDueDate('');
+      return;
+    }
+    // Create date object from parts (interpreted as local time)
+    const d = new Date(`${datePart}T${hourPart}:${minutePart}:00`);
+    setDueDate(d.toISOString());
+  }, [datePart, hourPart, minutePart]);
 
   if (!isOpen) return null;
 
@@ -64,9 +111,9 @@ export const TaskModal: React.FC<TaskModalProps> = ({
       category: priorityConfig.label,
       color: priorityConfig.color,
       status: initialTask?.status || defaultStatus,
-      dueDate: dueDate, // Empty string is valid for optional date
+      dueDate: dueDate, 
       userId,
-      createdAt: initialTask?.createdAt || now, // Preserve existing createdAt or set new
+      createdAt: initialTask?.createdAt || now,
       completedAt: initialTask?.completedAt,
       isArchived: initialTask?.isArchived || false,
     };
@@ -75,7 +122,6 @@ export const TaskModal: React.FC<TaskModalProps> = ({
     onClose();
   };
 
-  // Generate Google Calendar Link if date is set
   const calendarUrl = dueDate ? generateGoogleCalendarUrl(title, content, dueDate) : '';
 
   return (
@@ -115,7 +161,7 @@ export const TaskModal: React.FC<TaskModalProps> = ({
             />
           </div>
 
-          <div className="grid grid-cols-2 gap-4 items-start">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-start">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 優先級與分類
@@ -132,25 +178,67 @@ export const TaskModal: React.FC<TaskModalProps> = ({
             </div>
             
             <div>
-              <Input
-                label="預計完成時間 (選填)"
-                type="datetime-local"
-                value={dueDate}
-                onChange={(e) => setDueDate(e.target.value)}
-                step="600"
-                className="[&::-webkit-calendar-picker-indicator]:cursor-pointer [&::-webkit-calendar-picker-indicator]:bg-blue-100 [&::-webkit-calendar-picker-indicator]:hover:bg-blue-200 [&::-webkit-calendar-picker-indicator]:p-1.5 [&::-webkit-calendar-picker-indicator]:rounded-md [&::-webkit-calendar-picker-indicator]:transition-colors"
-                onClick={(e) => {
-                  // Explicitly try to open the picker on click for better UX
-                  try {
-                    const input = e.currentTarget as HTMLInputElement;
-                    if (typeof input.showPicker === 'function') {
-                      input.showPicker();
-                    }
-                  } catch (err) {
-                    // Ignore errors if showPicker is not supported or fails
-                  }
-                }}
-              />
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                預計完成時間 (選填)
+              </label>
+              <div className="space-y-2">
+                {/* Simplified Date Picker - Click anywhere to trigger */}
+                <div className="relative">
+                  <input
+                    ref={dateInputRef}
+                    type="date"
+                    className="w-full rounded-md border border-gray-300 bg-white pl-3 pr-10 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer [&::-webkit-calendar-picker-indicator]:opacity-0"
+                    value={datePart}
+                    onChange={(e) => setDatePart(e.target.value)}
+                    onClick={() => {
+                        try {
+                            if ('showPicker' in HTMLInputElement.prototype) {
+                                dateInputRef.current?.showPicker();
+                            }
+                        } catch (e) {
+                            console.log('showPicker not supported');
+                        }
+                    }}
+                  />
+                  <Calendar 
+                    size={18} 
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" 
+                  />
+                </div>
+
+                {/* Time Pickers (Visible only if date is selected) */}
+                {datePart && (
+                  <div className="flex gap-2 items-center animate-in fade-in slide-in-from-top-1 duration-200">
+                    <div className="relative flex-1">
+                      <select
+                        value={hourPart}
+                        onChange={(e) => setHourPart(e.target.value)}
+                        className="w-full appearance-none rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 pr-8 cursor-pointer text-center font-mono"
+                      >
+                        {HOURS.map(h => (
+                          <option key={h} value={h}>{h} 時</option>
+                        ))}
+                      </select>
+                      <Clock size={14} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+                    </div>
+                    
+                    <span className="text-gray-400 font-bold">:</span>
+
+                    <div className="relative flex-1">
+                      <select
+                        value={minutePart}
+                        onChange={(e) => setMinutePart(e.target.value)}
+                        className="w-full appearance-none rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 pr-8 cursor-pointer text-center font-mono"
+                      >
+                        {MINUTES.map(m => (
+                          <option key={m} value={m}>{m} 分</option>
+                        ))}
+                      </select>
+                      <Clock size={14} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+                    </div>
+                  </div>
+                )}
+              </div>
               
               {dueDate && (
                  <div className="mt-2 flex justify-end">
