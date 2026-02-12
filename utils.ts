@@ -17,6 +17,16 @@ export function isOverdue(dueDateString: string, status: string): boolean {
   return now > dueDate;
 }
 
+export function isToday(dateString: string): boolean {
+  if (!dateString) return false;
+  const date = new Date(dateString);
+  const today = new Date();
+  
+  return date.getDate() === today.getDate() &&
+         date.getMonth() === today.getMonth() &&
+         date.getFullYear() === today.getFullYear();
+}
+
 export function formatDate(dateString: string): string {
   if (!dateString) return '';
   const date = new Date(dateString);

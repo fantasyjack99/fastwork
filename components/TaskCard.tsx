@@ -1,9 +1,9 @@
 import React from 'react';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { Clock, AlertCircle, Archive, Calendar } from 'lucide-react';
+import { Clock, AlertCircle, Archive, Calendar, AlertTriangle } from 'lucide-react';
 import { Task } from '../types';
-import { cn, isOverdue, formatDate } from '../utils';
+import { cn, isOverdue, formatDate, isToday } from '../utils';
 
 interface TaskCardProps {
   task: Task;
@@ -32,7 +32,9 @@ export const TaskCard: React.FC<TaskCardProps> = ({ task, onClick, onArchive }) 
     transition,
   };
 
+  const isDone = task.status === 'done';
   const overdue = isOverdue(task.dueDate, task.status);
+  const dueToday = !isDone && isToday(task.dueDate);
 
   // Format creation date for display
   const createdDate = task.createdAt 
@@ -63,7 +65,10 @@ export const TaskCard: React.FC<TaskCardProps> = ({ task, onClick, onArchive }) 
       onClick={() => onClick(task)}
       className={cn(
         "group relative bg-white p-4 rounded-lg shadow-sm border border-gray-200 cursor-grab active:cursor-grabbing mb-3 hover:shadow-md transition-all flex flex-col gap-2",
-        overdue && "border-l-4 border-l-red-500 border-red-200 bg-red-50/30"
+        // Overdue style
+        overdue && "border-l-4 border-l-red-500 border-red-200 bg-red-50/40",
+        // Due Today style (if not overdue)
+        (dueToday && !overdue) && "border-l-4 border-l-orange-400 border-orange-200 bg-orange-50/30"
       )}
     >
       {/* Color Category Strip */}
@@ -77,10 +82,18 @@ export const TaskCard: React.FC<TaskCardProps> = ({ task, onClick, onArchive }) 
           <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-gray-100 text-gray-600 truncate max-w-[120px]">
             {task.category || '未分類'}
           </span>
+          
+          {/* Status Indicators */}
           {overdue && (
-            <div className="flex items-center text-red-600 text-xs font-bold animate-pulse">
+            <div className="flex items-center text-red-600 text-xs font-bold animate-pulse bg-red-100 px-1.5 py-0.5 rounded">
               <AlertCircle size={12} className="mr-1" />
               逾期
+            </div>
+          )}
+          {dueToday && !overdue && (
+            <div className="flex items-center text-orange-600 text-xs font-bold bg-orange-100 px-1.5 py-0.5 rounded">
+              <AlertTriangle size={12} className="mr-1" />
+              今天到期
             </div>
           )}
         </div>
@@ -95,7 +108,7 @@ export const TaskCard: React.FC<TaskCardProps> = ({ task, onClick, onArchive }) 
 
         {/* Footer Info */}
         <div className="flex items-center justify-between text-xs text-gray-400 border-t pt-2 mt-auto">
-          <div className="flex flex-col gap-1">
+          <div className="flex flex-col gap-1 w-full">
              {/* Creation Date */}
              {createdDate && (
               <div className="flex items-center text-gray-400" title="建立時間">
@@ -106,9 +119,28 @@ export const TaskCard: React.FC<TaskCardProps> = ({ task, onClick, onArchive }) 
             
             {/* Due Date */}
             {task.dueDate && (
-              <div className={cn("flex items-center", overdue ? "text-red-500 font-medium" : "")} title="預計完成時間">
-                <Clock size={10} className="mr-1.5" />
-                <span>{formatDate(task.dueDate)}</span>
+              <div 
+                className={cn(
+                  "flex items-center justify-between w-full mt-0.5", 
+                  // If done, gray out. If not done, force red text as requested.
+                  isDone 
+                    ? "text-gray-400 line-through decoration-gray-400" 
+                    : "text-rose-600 font-medium"
+                )} 
+                title="預計完成時間"
+              >
+                <div className="flex items-center">
+                  <Clock size={12} className={cn("mr-1.5", isDone ? "" : "text-rose-500")} />
+                  <span>{formatDate(task.dueDate)}</span>
+                </div>
+                
+                {/* Extra text label for visual emphasis on card bottom */}
+                {!isDone && overdue && (
+                  <span className="text-[10px] font-bold text-red-600 ml-1">已逾期</span>
+                )}
+                {!isDone && dueToday && !overdue && (
+                  <span className="text-[10px] font-bold text-orange-600 ml-1">今天</span>
+                )}
               </div>
             )}
           </div>
