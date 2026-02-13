@@ -1,116 +1,213 @@
-import { Task, User } from './types';
-import { generateId } from './utils';
+import { createClient } from '@supabase/supabase-js'
+import type { Task, User } from './types'
 
-// Keys for LocalStorage (Simulating Database Tables)
-const DB_KEYS = {
-  SESSION: 'micro_kanban_session',
-  USERS: 'micro_kanban_users_db',
-  TASKS: (userId: string) => `micro_kanban_tasks_${userId}`,
-};
+// Environment variables
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
 
-// Simulate network latency (300ms - 800ms)
-const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+// Create Supabase client
+export const supabase = createClient(
+  supabaseUrl || 'https://example.supabase.co',
+  supabaseAnonKey || 'example-key'
+)
 
-export const api = {
-  auth: {
-    // Check if user is already logged in
-    getSession: async (): Promise<User | null> => {
-      await delay(500); // Simulate check
-      const sessionStr = localStorage.getItem(DB_KEYS.SESSION);
-      if (!sessionStr) return null;
-      try {
-        return JSON.parse(sessionStr);
-      } catch {
-        return null;
-      }
-    },
-
-    // Login (Mock)
-    login: async (email: string, password: string): Promise<User> => {
-      await delay(800);
-      
-      // In a real app, verify password hash here.
-      // For now, we simulate a successful login or create a mock user.
-      const user: User = {
-        id: email.replace(/[^a-zA-Z0-9]/g, ''),
-        email,
-        name: email.split('@')[0],
-      };
-
-      // Save Session
-      localStorage.setItem(DB_KEYS.SESSION, JSON.stringify(user));
-      return user;
-    },
-
-    // Register (Mock)
-    register: async (name: string, email: string, password: string): Promise<User> => {
-      await delay(800);
-      const user: User = {
-        id: email.replace(/[^a-zA-Z0-9]/g, ''),
-        email,
-        name,
-      };
-      localStorage.setItem(DB_KEYS.SESSION, JSON.stringify(user));
-      return user;
-    },
-
-    // Logout
-    logout: async () => {
-      await delay(300);
-      localStorage.removeItem(DB_KEYS.SESSION);
-    },
+// Auth helpers
+export const auth = {
+  // Get current user
+  getUser: async (): Promise<User | null> => {
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return null
+    
+    // Get user profile
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('*')
+      .eq('id', user.id)
+      .single()
+    
+    return profile ? {
+      id: profile.id,
+      email: profile.email,
+      name: profile.name,
+    } : null
   },
 
-  tasks: {
-    // Get all tasks for a user
-    list: async (userId: string): Promise<Task[]> => {
-      await delay(600); // Simulate network load
-      const json = localStorage.getItem(DB_KEYS.TASKS(userId));
-      return json ? JSON.parse(json) : [];
-    },
-
-    // Create or Update a task
-    save: async (userId: string, task: Task): Promise<Task> => {
-      await delay(400); // Simulate save delay
-      
-      const key = DB_KEYS.TASKS(userId);
-      const currentTasksStr = localStorage.getItem(key);
-      let tasks: Task[] = currentTasksStr ? JSON.parse(currentTasksStr) : [];
-
-      const existingIndex = tasks.findIndex(t => t.id === task.id);
-      
-      if (existingIndex >= 0) {
-        // Update
-        tasks[existingIndex] = task;
-      } else {
-        // Create
-        tasks.push(task);
-      }
-
-      localStorage.setItem(key, JSON.stringify(tasks));
-      return task;
-    },
-
-    // Delete a task
-    delete: async (userId: string, taskId: string): Promise<void> => {
-      await delay(300);
-      const key = DB_KEYS.TASKS(userId);
-      const currentTasksStr = localStorage.getItem(key);
-      if (!currentTasksStr) return;
-
-      const tasks: Task[] = JSON.parse(currentTasksStr);
-      const newTasks = tasks.filter(t => t.id !== taskId);
-      localStorage.setItem(key, JSON.stringify(newTasks));
-    },
-
-    // Batch update (for drag and drop reordering)
-    batchUpdate: async (userId: string, tasks: Task[]): Promise<Task[]> => {
-        // Note: Drag and drop needs to be snappy, so we might want lower simulated latency here
-        // or handle it optimistically in the UI (which we do).
-        // This persists the final order.
-        const key = DB_KEYS.TASKS(userId);
-        localStorage.setItem(key, JSON.stringify(tasks));
-        return tasks;
+  // Login with email/password
+  login: async (email: string, password: string): Promise<User> => {
+    const { data: { user, session }, error } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    })
+    
+    if (error) throw new Error(error.message)
+    
+    // Get profile
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('*')
+      .eq('id', user!.id)
+      .single()
+    
+    return {
+      id: profile?.id || user!.id,
+      email: profile?.email || email,
+      name: profile?.name || email.split('@')[0],
     }
   },
-};
+
+  // Register with email/password
+  register: async (name: string, email: string, password: string): Promise<User> => {
+    const { data: { user, session }, error } = await supabase.auth.signUp({
+      email,
+      password,
+      options: {
+        data: {
+          name,
+        },
+      },
+    })
+    
+    if (error) throw new Error(error.message)
+    
+    // Profile should be auto-created by trigger, but ensure it
+    if (user) {
+      const { error: profileError } = await supabase
+        .from('profiles')
+        .upsert({
+          id: user.id,
+          email,
+          name,
+        })
+        .select()
+        .single()
+      
+      if (profileError) console.warn('Profile creation warning:', profileError)
+    }
+    
+    return {
+      id: user?.id || email,
+      email,
+      name,
+    }
+  },
+
+  // Logout
+  logout: async () => {
+    await supabase.auth.signOut()
+  },
+}
+
+// Tasks API
+export const tasks = {
+  // Get all tasks for current user
+  list: async (userId: string): Promise<Task[]> => {
+    const { data, error } = await supabase
+      .from('tasks')
+      .select('*')
+      .eq('user_id', userId)
+      .eq('is_archived', false)
+      .order('created_at', { ascending: false })
+    
+    if (error) throw new Error(error.message)
+    
+    return (data || []).map(task => ({
+      id: task.id,
+      title: task.title,
+      content: task.content || '',
+      category: task.category,
+      color: task.color,
+      status: task.status,
+      dueDate: task.due_date,
+      userId: task.user_id,
+      createdAt: task.created_at,
+      completedAt: task.completed_at,
+      isArchived: task.is_archived,
+    }))
+  },
+
+  // Save task (create or update)
+  save: async (userId: string, task: Task): Promise<Task> => {
+    const taskData = {
+      id: task.id,
+      user_id: userId,
+      title: task.title,
+      content: task.content || null,
+      category: task.category,
+      color: task.color,
+      status: task.status,
+      due_date: task.dueDate || null,
+      completed_at: task.completedAt || null,
+      is_archived: task.isArchived || false,
+    }
+    
+    const { data, error } = await supabase
+      .from('tasks')
+      .upsert(taskData)
+      .select()
+      .single()
+    
+    if (error) throw new Error(error.message)
+    
+    return {
+      id: data.id,
+      title: data.title,
+      content: data.content || '',
+      category: data.category,
+      color: data.color,
+      status: data.status,
+      dueDate: data.due_date,
+      userId: data.user_id,
+      createdAt: data.created_at,
+      completedAt: data.completed_at,
+      isArchived: data.is_archived,
+    }
+  },
+
+  // Delete task
+  delete: async (userId: string, taskId: string): Promise<void> => {
+    const { error } = await supabase
+      .from('tasks')
+      .delete()
+      .eq('id', taskId)
+      .eq('user_id', userId)
+    
+    if (error) throw new Error(error.message)
+  },
+
+  // Archive task
+  archive: async (userId: string, taskId: string): Promise<void> => {
+    const { error } = await supabase
+      .from('tasks')
+      .update({ is_archived: true })
+      .eq('id', taskId)
+      .eq('user_id', userId)
+    
+    if (error) throw new Error(error.message)
+  },
+
+  // Get archived tasks
+  listArchived: async (userId: string): Promise<Task[]> => {
+    const { data, error } = await supabase
+      .from('tasks')
+      .select('*')
+      .eq('user_id', userId)
+      .eq('is_archived', true)
+      .order('completed_at', { ascending: false })
+    
+    if (error) throw new Error(error.message)
+    
+    return (data || []).map(task => ({
+      id: task.id,
+      title: task.title,
+      content: task.content || '',
+      category: task.category,
+      color: task.color,
+      status: task.status,
+      dueDate: task.due_date,
+      userId: task.user_id,
+      createdAt: task.created_at,
+      completedAt: task.completed_at,
+      isArchived: task.is_archived,
+    }))
+  },
+}
