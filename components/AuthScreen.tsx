@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Button } from './Button';
 import { Input } from './Input';
 import { User } from '../types';
-import { LayoutDashboard, AlertCircle } from 'lucide-react';
+import { LayoutDashboard, AlertCircle, CheckCircle2 } from 'lucide-react';
 import { api } from '../services';
 
 interface AuthScreenProps {
@@ -16,22 +16,34 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
   const [name, setName] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [verificationSent, setVerificationSent] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setError('');
+    setVerificationSent(false);
     
     try {
-        let user: User;
         if (isLogin) {
-            user = await api.auth.login(email, password);
+            const user = await api.auth.login(email, password);
+            onLogin(user);
         } else {
-            user = await api.auth.register(name, email, password);
+            const user = await api.auth.register(name, email, password);
+            if (user) {
+              onLogin(user);
+            } else {
+              // User created but session null => Needs email verification
+              setVerificationSent(true);
+              setIsLogin(true); // Switch to login view
+            }
         }
-        onLogin(user);
-    } catch (e) {
-        setError('操作失敗，請稍後再試。');
+    } catch (e: any) {
+        console.error(e);
+        let msg = '操作失敗，請稍後再試。';
+        if (e.message.includes('Invalid login credentials')) msg = '帳號或密碼錯誤';
+        if (e.message.includes('User already registered')) msg = '此 Email 已被註冊';
+        setError(msg);
     } finally {
         setLoading(false);
     }
@@ -39,14 +51,14 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
 
   const handleGoogleLogin = async () => {
     setLoading(true);
-    // Simulate Google Login via API service if we had one, 
-    // for now we just use the mocked login logic but pretend it's Google
-    setTimeout(async () => {
-        const user = await api.auth.login('google_user@gmail.com', 'dummy');
-        user.name = "Google User";
-        onLogin(user);
+    try {
+        await api.auth.loginWithGoogle();
+        // Note: This will redirect the page, so no need to stop loading or call onLogin
+    } catch (e: any) {
         setLoading(false);
-    }, 1000);
+        console.error(e);
+        setError('無法啟動 Google 登入，請檢查 Supabase 設定。');
+    }
   };
 
   return (
@@ -67,7 +79,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
             className={`flex-1 py-4 text-sm font-medium text-center transition-colors ${
               isLogin ? 'bg-white text-blue-600 border-b-2 border-blue-600' : 'bg-gray-50 text-gray-500 hover:text-gray-700'
             }`}
-            onClick={() => { setIsLogin(true); setError(''); }}
+            onClick={() => { setIsLogin(true); setError(''); setVerificationSent(false); }}
           >
             登入
           </button>
@@ -75,7 +87,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
             className={`flex-1 py-4 text-sm font-medium text-center transition-colors ${
               !isLogin ? 'bg-white text-blue-600 border-b-2 border-blue-600' : 'bg-gray-50 text-gray-500 hover:text-gray-700'
             }`}
-            onClick={() => { setIsLogin(false); setError(''); }}
+            onClick={() => { setIsLogin(false); setError(''); setVerificationSent(false); }}
           >
             註冊
           </button>
@@ -120,6 +132,16 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
         </div>
 
         <form onSubmit={handleSubmit} className="px-8 pb-8 pt-2 space-y-6">
+          {verificationSent && (
+             <div className="bg-green-50 text-green-700 text-sm p-4 rounded-lg flex items-start">
+                <CheckCircle2 size={18} className="mr-2 shrink-0 mt-0.5"/>
+                <div>
+                   <p className="font-bold">註冊成功！</p>
+                   <p>驗證信已寄至您的信箱，請點擊信中連結完成啟用，然後再次登入。</p>
+                </div>
+             </div>
+          )}
+
           {error && (
             <div className="bg-red-50 text-red-600 text-sm p-3 rounded-lg flex items-center">
                 <AlertCircle size={16} className="mr-2 shrink-0"/>

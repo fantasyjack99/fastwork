@@ -1,62 +1,139 @@
 import { Task, User } from './types';
 import { supabase } from './supabaseClient';
 
+// ------------------------------------------------------------------
+// 資料庫欄位名稱轉換 (Mapping Layer)
+// 解決 Frontend (camelCase) 與 Database (snake_case) 命名不一致的問題
+// ------------------------------------------------------------------
+
+// 將資料庫格式 (snake_case) 轉為 應用程式格式 (camelCase)
+const mapFromDb = (item: any): Task => ({
+  id: item.id,
+  title: item.title,
+  content: item.content,
+  category: item.category,
+  color: item.color,
+  status: item.status,
+  // 優先使用 snake_case，若無則嘗試 camelCase (相容性)
+  dueDate: item.due_date || item.dueDate,
+  userId: item.user_id || item.userId,
+  createdAt: item.created_at || item.createdAt,
+  completedAt: item.completed_at || item.completedAt,
+  isArchived: item.is_archived ?? item.isArchived ?? false,
+});
+
+// 將 應用程式格式 (camelCase) 轉為 資料庫格式 (snake_case)
+const mapToDb = (task: Task) => ({
+  id: task.id,
+  title: task.title,
+  content: task.content,
+  category: task.category,
+  color: task.color,
+  status: task.status,
+  due_date: task.dueDate,
+  user_id: task.userId,
+  created_at: task.createdAt,
+  completed_at: task.completedAt,
+  is_archived: task.isArchived
+});
+
+// ------------------------------------------------------------------
+
 export const api = {
   auth: {
     // Check if user is already logged in via Supabase Session
     getSession: async (): Promise<User | null> => {
-      const { data: { session } } = await supabase.auth.getSession();
-      
-      if (!session?.user) return null;
+      try {
+        const { data: { session }, error } = await supabase.auth.getSession();
+        if (error) throw error;
+        
+        if (!session?.user) return null;
 
-      return {
-        id: session.user.id,
-        email: session.user.email || '',
-        name: session.user.user_metadata?.name || session.user.email?.split('@')[0] || 'User',
-      };
+        return {
+          id: session.user.id,
+          email: session.user.email || '',
+          name: session.user.user_metadata?.name || session.user.email?.split('@')[0] || 'User',
+        };
+      } catch (err) {
+        console.warn("Session check failed", err);
+        return null;
+      }
     },
 
     // Login with Supabase
     login: async (email: string, password: string): Promise<User> => {
-      const { data, error } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
+      try {
+        const { data, error } = await supabase.auth.signInWithPassword({
+          email,
+          password,
+        });
 
-      if (error) throw error;
-      if (!data.user) throw new Error('Login failed');
+        if (error) throw error;
+        if (!data.user) throw new Error('Login failed');
 
-      return {
-        id: data.user.id,
-        email: data.user.email || '',
-        name: data.user.user_metadata?.name || email.split('@')[0],
-      };
+        return {
+          id: data.user.id,
+          email: data.user.email || '',
+          name: data.user.user_metadata?.name || email.split('@')[0],
+        };
+      } catch (err: any) {
+        if (err.message === 'Failed to fetch') {
+           throw new Error('無法連接伺服器 (Failed to fetch)。請檢查 supabaseClient.ts 中的網址是否正確填入。');
+        }
+        throw err;
+      }
+    },
+
+    // Login with Google (OAuth)
+    loginWithGoogle: async (): Promise<void> => {
+      try {
+        const { error } = await supabase.auth.signInWithOAuth({
+          provider: 'google',
+          options: {
+            redirectTo: window.location.origin, 
+          }
+        });
+        if (error) throw error;
+      } catch (err: any) {
+        if (err.message === 'Failed to fetch') {
+            throw new Error('無法連接伺服器。請檢查 supabaseClient.ts 設定。');
+         }
+         throw err;
+      }
     },
 
     // Register with Supabase
-    register: async (name: string, email: string, password: string): Promise<User> => {
-      const { data, error } = await supabase.auth.signUp({
-        email,
-        password,
-        options: {
-          data: {
-            name: name,
+    register: async (name: string, email: string, password: string): Promise<User | null> => {
+      try {
+        const { data, error } = await supabase.auth.signUp({
+          email,
+          password,
+          options: {
+            data: {
+              name: name,
+            },
           },
-        },
-      });
+        });
 
-      if (error) throw error;
-      
-      // Note: By default Supabase requires email confirmation. 
-      // If you disabled "Confirm email" in Supabase Auth settings, this works immediately.
-      // Otherwise, the user won't be logged in until they click the link.
-      if (!data.user) throw new Error('Registration failed');
+        if (error) throw error;
+        
+        if (data.user && !data.session) {
+          return null; 
+        }
 
-      return {
-        id: data.user.id,
-        email: data.user.email || '',
-        name: name,
-      };
+        if (!data.user) throw new Error('Registration failed');
+
+        return {
+          id: data.user.id,
+          email: data.user.email || '',
+          name: name,
+        };
+      } catch (err: any) {
+        if (err.message === 'Failed to fetch') {
+            throw new Error('無法連接伺服器。請檢查 supabaseClient.ts 設定。');
+         }
+         throw err;
+      }
     },
 
     // Logout
@@ -71,29 +148,31 @@ export const api = {
       const { data, error } = await supabase
         .from('tasks')
         .select('*')
-        .eq('userId', userId); // Ensure we only get this user's tasks (RLS covers this too)
+        .eq('user_id', userId); // 使用 snake_case (user_id) 查詢
 
       if (error) {
         console.error('Error fetching tasks:', error);
         return [];
       }
 
-      return data as Task[];
+      // 將回傳的資料轉換回 App 格式
+      return (data || []).map(mapFromDb);
     },
 
     // Create or Update a task (Upsert)
     save: async (userId: string, task: Task): Promise<Task> => {
-      // Ensure the task object has the correct userId attached
-      const taskToSave = { ...task, userId };
+      // 轉換成資料庫格式，並確保 user_id 正確
+      const dbTask = mapToDb({ ...task, userId });
 
       const { data, error } = await supabase
         .from('tasks')
-        .upsert(taskToSave)
+        .upsert(dbTask)
         .select()
         .single();
 
       if (error) throw error;
-      return data as Task;
+      // 將回傳的新資料轉換回 App 格式
+      return mapFromDb(data);
     },
 
     // Delete a task
@@ -102,24 +181,25 @@ export const api = {
         .from('tasks')
         .delete()
         .eq('id', taskId)
-        .eq('userId', userId); // Extra safety check
+        .eq('user_id', userId); // 使用 snake_case (user_id) 確保安全性
 
       if (error) throw error;
     },
 
-    // Batch update (for drag and drop reordering / status changes)
+    // Batch update
     batchUpdate: async (userId: string, tasks: Task[]): Promise<Task[]> => {
       if (tasks.length === 0) return [];
       
-      // Upsert all tasks in the array
-      // Note: This helps persist status changes and potential reordering data if we added an order column later.
+      // 批量轉換
+      const dbTasks = tasks.map(t => mapToDb({ ...t, userId }));
+
       const { data, error } = await supabase
         .from('tasks')
-        .upsert(tasks)
+        .upsert(dbTasks)
         .select();
 
       if (error) throw error;
-      return data as Task[];
+      return (data || []).map(mapFromDb);
     }
   },
 };

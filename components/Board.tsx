@@ -251,11 +251,12 @@ export const Board: React.FC<BoardProps> = ({ user, onLogout }) => {
     // API Call
     try {
       await api.tasks.save(user.id, task);
-    } catch (e) {
+    } catch (e: any) {
       // Revert on error
       console.error("Save failed", e);
       setTasks(oldTasks);
-      alert("儲存失敗，請檢查網路連線");
+      // Show specific error to user
+      alert(`儲存失敗: ${e.message || '資料庫連線錯誤，請檢查 Supabase 設定。'}`);
     }
   };
 
@@ -265,9 +266,10 @@ export const Board: React.FC<BoardProps> = ({ user, onLogout }) => {
       
       try {
           await api.tasks.delete(user.id, taskId);
-      } catch (e) {
+      } catch (e: any) {
           console.error("Delete failed", e);
           setTasks(oldTasks);
+          alert(`刪除失敗: ${e.message || '資料庫連線錯誤。'}`);
       }
   };
   
