@@ -1,222 +1,125 @@
-import { createClient } from '@supabase/supabase-js'
-import type { Task, User } from './types'
+import { Task, User } from './types';
+import { supabase } from './supabaseClient';
 
-// Environment variables
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
+export const api = {
+  auth: {
+    // Check if user is already logged in via Supabase Session
+    getSession: async (): Promise<User | null> => {
+      const { data: { session } } = await supabase.auth.getSession();
+      
+      if (!session?.user) return null;
 
-// Create Supabase client
-export const supabase = createClient(
-  supabaseUrl || 'https://example.supabase.co',
-  supabaseAnonKey || 'example-key'
-)
+      return {
+        id: session.user.id,
+        email: session.user.email || '',
+        name: session.user.user_metadata?.name || session.user.email?.split('@')[0] || 'User',
+      };
+    },
 
-// Auth helpers
-export const auth = {
-  // Get current user
-  getUser: async (): Promise<User | null> => {
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return null
-    
-    // Get user profile
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('*')
-      .eq('id', user.id)
-      .single()
-    
-    return {
-      id: user.id,  // Always use the auth user ID (UUID)
-      email: profile?.email || user.email || '',
-      name: profile?.name || user.user_metadata?.name || user.email?.split('@')[0] || 'User',
-    }
-  },
-
-  // Login with email/password
-  login: async (email: string, password: string): Promise<User> => {
-    const { data: { user, session }, error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    })
-    
-    if (error) throw new Error(error.message)
-    if (!user) throw new Error('No user returned')
-    
-    // Get profile
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('*')
-      .eq('id', user.id)
-      .single()
-    
-    return {
-      id: user.id,  // Always use the auth user ID (UUID)
-      email: profile?.email || user.email || email,
-      name: profile?.name || user.user_metadata?.name || user.email?.split('@')[0] || 'User',
-    }
-  },
-
-  // Register with email/password
-  register: async (name: string, email: string, password: string): Promise<User> => {
-    const { data: { user, session }, error } = await supabase.auth.signUp({
-      email,
-      password,
-      options: {
-        data: {
-          name,
-        },
-      },
-    })
-    
-    if (error) throw new Error(error.message)
-    if (!user) throw new Error('No user returned')
-    
-    // Profile should be auto-created by trigger, but ensure it
-    const { error: profileError } = await supabase
-      .from('profiles')
-      .upsert({
-        id: user.id,
+    // Login with Supabase
+    login: async (email: string, password: string): Promise<User> => {
+      const { data, error } = await supabase.auth.signInWithPassword({
         email,
-        name,
-      })
-      .select()
-      .single()
-    
-    if (profileError) console.warn('Profile creation warning:', profileError)
-    
-    return {
-      id: user.id,
-      email,
-      name,
+        password,
+      });
+
+      if (error) throw error;
+      if (!data.user) throw new Error('Login failed');
+
+      return {
+        id: data.user.id,
+        email: data.user.email || '',
+        name: data.user.user_metadata?.name || email.split('@')[0],
+      };
+    },
+
+    // Register with Supabase
+    register: async (name: string, email: string, password: string): Promise<User> => {
+      const { data, error } = await supabase.auth.signUp({
+        email,
+        password,
+        options: {
+          data: {
+            name: name,
+          },
+        },
+      });
+
+      if (error) throw error;
+      
+      // Note: By default Supabase requires email confirmation. 
+      // If you disabled "Confirm email" in Supabase Auth settings, this works immediately.
+      // Otherwise, the user won't be logged in until they click the link.
+      if (!data.user) throw new Error('Registration failed');
+
+      return {
+        id: data.user.id,
+        email: data.user.email || '',
+        name: name,
+      };
+    },
+
+    // Logout
+    logout: async () => {
+      await supabase.auth.signOut();
+    },
+  },
+
+  tasks: {
+    // Get all tasks for a user
+    list: async (userId: string): Promise<Task[]> => {
+      const { data, error } = await supabase
+        .from('tasks')
+        .select('*')
+        .eq('userId', userId); // Ensure we only get this user's tasks (RLS covers this too)
+
+      if (error) {
+        console.error('Error fetching tasks:', error);
+        return [];
+      }
+
+      return data as Task[];
+    },
+
+    // Create or Update a task (Upsert)
+    save: async (userId: string, task: Task): Promise<Task> => {
+      // Ensure the task object has the correct userId attached
+      const taskToSave = { ...task, userId };
+
+      const { data, error } = await supabase
+        .from('tasks')
+        .upsert(taskToSave)
+        .select()
+        .single();
+
+      if (error) throw error;
+      return data as Task;
+    },
+
+    // Delete a task
+    delete: async (userId: string, taskId: string): Promise<void> => {
+      const { error } = await supabase
+        .from('tasks')
+        .delete()
+        .eq('id', taskId)
+        .eq('userId', userId); // Extra safety check
+
+      if (error) throw error;
+    },
+
+    // Batch update (for drag and drop reordering / status changes)
+    batchUpdate: async (userId: string, tasks: Task[]): Promise<Task[]> => {
+      if (tasks.length === 0) return [];
+      
+      // Upsert all tasks in the array
+      // Note: This helps persist status changes and potential reordering data if we added an order column later.
+      const { data, error } = await supabase
+        .from('tasks')
+        .upsert(tasks)
+        .select();
+
+      if (error) throw error;
+      return data as Task[];
     }
   },
-
-  // Logout
-  logout: async () => {
-    await supabase.auth.signOut()
-  },
-}
-
-// Tasks API
-export const tasks = {
-  // Get all tasks for current user
-  list: async (userId: string): Promise<Task[]> => {
-    console.log('Fetching tasks for userId:', userId)
-    const { data, error } = await supabase
-      .from('tasks')
-      .select('*')
-      .eq('user_id', userId)
-      .eq('is_archived', false)
-      .order('created_at', { ascending: false })
-    
-    if (error) {
-      console.error('Supabase error:', error)
-      throw new Error(error.message)
-    }
-    
-    return (data || []).map(task => ({
-      id: task.id,
-      title: task.title,
-      content: task.content || '',
-      category: task.category,
-      color: task.color,
-      status: task.status,
-      dueDate: task.due_date,
-      userId: task.user_id,
-      createdAt: task.created_at,
-      completedAt: task.completed_at,
-      isArchived: task.is_archived,
-    }))
-  },
-
-  // Save task (create or update)
-  save: async (userId: string, task: Task): Promise<Task> => {
-    console.log('Saving task for userId:', userId, 'task:', task.id)
-    const taskData = {
-      id: task.id,
-      user_id: userId,  // Use the proper UUID
-      title: task.title,
-      content: task.content || null,
-      category: task.category,
-      color: task.color,
-      status: task.status,
-      due_date: task.dueDate || null,
-      completed_at: task.completedAt || null,
-      is_archived: task.isArchived || false,
-    }
-    
-    console.log('Task data:', taskData)
-    const { data, error } = await supabase
-      .from('tasks')
-      .upsert(taskData)
-      .select()
-      .single()
-    
-    if (error) {
-      console.error('Supabase save error:', error)
-      throw new Error(error.message)
-    }
-    
-    return {
-      id: data.id,
-      title: data.title,
-      content: data.content || '',
-      category: data.category,
-      color: data.color,
-      status: data.status,
-      dueDate: data.due_date,
-      userId: data.user_id,
-      createdAt: data.created_at,
-      completedAt: data.completed_at,
-      isArchived: data.is_archived,
-    }
-  },
-
-  // Delete task
-  delete: async (userId: string, taskId: string): Promise<void> => {
-    const { error } = await supabase
-      .from('tasks')
-      .delete()
-      .eq('id', taskId)
-      .eq('user_id', userId)
-    
-    if (error) throw new Error(error.message)
-  },
-
-  // Archive task
-  archive: async (userId: string, taskId: string): Promise<void> => {
-    const { error } = await supabase
-      .from('tasks')
-      .update({ is_archived: true })
-      .eq('id', taskId)
-      .eq('user_id', userId)
-    
-    if (error) throw new Error(error.message)
-  },
-
-  // Get archived tasks
-  listArchived: async (userId: string): Promise<Task[]> => {
-    const { data, error } = await supabase
-      .from('tasks')
-      .select('*')
-      .eq('user_id', userId)
-      .eq('is_archived', true)
-      .order('completed_at', { ascending: false })
-    
-    if (error) throw new Error(error.message)
-    
-    return (data || []).map(task => ({
-      id: task.id,
-      title: task.title,
-      content: task.content || '',
-      category: task.category,
-      color: task.color,
-      status: task.status,
-      dueDate: task.due_date,
-      userId: task.user_id,
-      createdAt: task.created_at,
-      completedAt: task.completed_at,
-      isArchived: task.is_archived,
-    }))
-  },
-}
+};
