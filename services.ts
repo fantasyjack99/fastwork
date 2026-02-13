@@ -25,11 +25,11 @@ export const auth = {
       .eq('id', user.id)
       .single()
     
-    return profile ? {
-      id: profile.id,
-      email: profile.email,
-      name: profile.name,
-    } : null
+    return {
+      id: user.id,  // Always use the auth user ID (UUID)
+      email: profile?.email || user.email || '',
+      name: profile?.name || user.user_metadata?.name || user.email?.split('@')[0] || 'User',
+    }
   },
 
   // Login with email/password
@@ -40,18 +40,19 @@ export const auth = {
     })
     
     if (error) throw new Error(error.message)
+    if (!user) throw new Error('No user returned')
     
     // Get profile
     const { data: profile } = await supabase
       .from('profiles')
       .select('*')
-      .eq('id', user!.id)
+      .eq('id', user.id)
       .single()
     
     return {
-      id: profile?.id || user!.id,
-      email: profile?.email || email,
-      name: profile?.name || email.split('@')[0],
+      id: user.id,  // Always use the auth user ID (UUID)
+      email: profile?.email || user.email || email,
+      name: profile?.name || user.user_metadata?.name || user.email?.split('@')[0] || 'User',
     }
   },
 
@@ -68,24 +69,23 @@ export const auth = {
     })
     
     if (error) throw new Error(error.message)
+    if (!user) throw new Error('No user returned')
     
     // Profile should be auto-created by trigger, but ensure it
-    if (user) {
-      const { error: profileError } = await supabase
-        .from('profiles')
-        .upsert({
-          id: user.id,
-          email,
-          name,
-        })
-        .select()
-        .single()
-      
-      if (profileError) console.warn('Profile creation warning:', profileError)
-    }
+    const { error: profileError } = await supabase
+      .from('profiles')
+      .upsert({
+        id: user.id,
+        email,
+        name,
+      })
+      .select()
+      .single()
+    
+    if (profileError) console.warn('Profile creation warning:', profileError)
     
     return {
-      id: user?.id || email,
+      id: user.id,
       email,
       name,
     }
@@ -101,6 +101,7 @@ export const auth = {
 export const tasks = {
   // Get all tasks for current user
   list: async (userId: string): Promise<Task[]> => {
+    console.log('Fetching tasks for userId:', userId)
     const { data, error } = await supabase
       .from('tasks')
       .select('*')
@@ -108,7 +109,10 @@ export const tasks = {
       .eq('is_archived', false)
       .order('created_at', { ascending: false })
     
-    if (error) throw new Error(error.message)
+    if (error) {
+      console.error('Supabase error:', error)
+      throw new Error(error.message)
+    }
     
     return (data || []).map(task => ({
       id: task.id,
@@ -127,9 +131,10 @@ export const tasks = {
 
   // Save task (create or update)
   save: async (userId: string, task: Task): Promise<Task> => {
+    console.log('Saving task for userId:', userId, 'task:', task.id)
     const taskData = {
       id: task.id,
-      user_id: userId,
+      user_id: userId,  // Use the proper UUID
       title: task.title,
       content: task.content || null,
       category: task.category,
@@ -140,13 +145,17 @@ export const tasks = {
       is_archived: task.isArchived || false,
     }
     
+    console.log('Task data:', taskData)
     const { data, error } = await supabase
       .from('tasks')
       .upsert(taskData)
       .select()
       .single()
     
-    if (error) throw new Error(error.message)
+    if (error) {
+      console.error('Supabase save error:', error)
+      throw new Error(error.message)
+    }
     
     return {
       id: data.id,
