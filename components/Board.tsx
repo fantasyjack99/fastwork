@@ -30,7 +30,7 @@ import {
 import { Button } from './Button';
 import { createPortal } from 'react-dom';
 import { cn, isOverdue, isToday, getPriorityWeight, isCriticalTask, getWeekRange } from '../utils';
-import { api } from '../services';
+import { tasks } from '../services';
 
 // Column Component (Modified for unified usage)
 interface ColumnProps {
@@ -219,7 +219,7 @@ export const Board: React.FC<BoardProps> = ({ user, onLogout }) => {
     const loadTasks = async () => {
       setIsTasksLoading(true);
       try {
-        const fetchedTasks = await api.tasks.list(user.id);
+        const fetchedTasks = await tasks.list(user.id);
         setTasks(fetchedTasks);
       } catch (error) {
         console.error("Failed to load tasks", error);
@@ -250,7 +250,7 @@ export const Board: React.FC<BoardProps> = ({ user, onLogout }) => {
 
     // API Call
     try {
-      await api.tasks.save(user.id, task);
+      await tasks.save(user.id, task);
     } catch (e) {
       // Revert on error
       console.error("Save failed", e);
@@ -264,7 +264,7 @@ export const Board: React.FC<BoardProps> = ({ user, onLogout }) => {
       setTasks((prev) => prev.filter((t) => t.id !== taskId)); 
       
       try {
-          await api.tasks.delete(user.id, taskId);
+          await tasks.delete(user.id, taskId);
       } catch (e) {
           console.error("Delete failed", e);
           setTasks(oldTasks);
@@ -329,7 +329,7 @@ export const Board: React.FC<BoardProps> = ({ user, onLogout }) => {
       // Persist the reordered list/status changes
       // We send the whole list to simulate a batch update or order sync
       try {
-        await api.tasks.batchUpdate(user.id, tasks);
+        await tasks.batchUpdate(user.id, tasks);
       } catch(e) {
           console.error("Sync order failed", e);
       }
