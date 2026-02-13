@@ -2,7 +2,8 @@ import React, { useState } from 'react';
 import { Button } from './Button';
 import { Input } from './Input';
 import { User } from '../types';
-import { LayoutDashboard } from 'lucide-react';
+import { LayoutDashboard, AlertCircle } from 'lucide-react';
+import { api } from '../services';
 
 interface AuthScreenProps {
   onLogin: (user: User) => void;
@@ -14,40 +15,35 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
+    setError('');
     
-    // Simulating API call
-    setTimeout(() => {
-      // Create a mock user
-      const user: User = {
-        id: 'user-1',
-        email,
-        name: isLogin ? email.split('@')[0] : name,
-      };
-      
-      // Store token (simulated)
-      localStorage.setItem('micro_kanban_token', 'mock_jwt_token');
-      localStorage.setItem('micro_kanban_user', JSON.stringify(user));
-      
-      onLogin(user);
-      setLoading(false);
-    }, 800);
+    try {
+        let user: User;
+        if (isLogin) {
+            user = await api.auth.login(email, password);
+        } else {
+            user = await api.auth.register(name, email, password);
+        }
+        onLogin(user);
+    } catch (e) {
+        setError('操作失敗，請稍後再試。');
+    } finally {
+        setLoading(false);
+    }
   };
 
-  const handleGoogleLogin = () => {
+  const handleGoogleLogin = async () => {
     setLoading(true);
-    // Simulate Google Login Delay
-    setTimeout(() => {
-        const user: User = {
-            id: 'google-user-123',
-            email: 'google_user@gmail.com',
-            name: 'Google User',
-        };
-        localStorage.setItem('micro_kanban_token', 'mock_google_token');
-        localStorage.setItem('micro_kanban_user', JSON.stringify(user));
+    // Simulate Google Login via API service if we had one, 
+    // for now we just use the mocked login logic but pretend it's Google
+    setTimeout(async () => {
+        const user = await api.auth.login('google_user@gmail.com', 'dummy');
+        user.name = "Google User";
         onLogin(user);
         setLoading(false);
     }, 1000);
@@ -55,23 +51,23 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
 
   return (
     <div className="min-h-screen flex flex-col items-center justify-center bg-gray-50 p-4">
-      <div className="mb-8 flex flex-col items-center">
+      <div className="mb-8 flex flex-col items-center animate-in fade-in slide-in-from-bottom-4 duration-500">
         <div className="h-16 w-16 bg-blue-600 rounded-2xl flex items-center justify-center shadow-lg mb-4">
           <LayoutDashboard className="h-8 w-8 text-white" />
         </div>
-        <h1 className="text-3xl font-bold text-gray-900">快速工作記事</h1>
+        <h1 className="text-3xl font-bold text-gray-900 tracking-tight">快速工作記事</h1>
         <p className="text-gray-500 mt-2 text-center max-w-sm">
           極簡、直覺的專案管理工具。專注於任務流動與時效管理。
         </p>
       </div>
 
-      <div className="w-full max-w-md bg-white rounded-xl shadow-md border border-gray-100 overflow-hidden">
+      <div className="w-full max-w-md bg-white rounded-xl shadow-md border border-gray-100 overflow-hidden animate-in zoom-in duration-300">
         <div className="flex border-b">
           <button
             className={`flex-1 py-4 text-sm font-medium text-center transition-colors ${
               isLogin ? 'bg-white text-blue-600 border-b-2 border-blue-600' : 'bg-gray-50 text-gray-500 hover:text-gray-700'
             }`}
-            onClick={() => setIsLogin(true)}
+            onClick={() => { setIsLogin(true); setError(''); }}
           >
             登入
           </button>
@@ -79,7 +75,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
             className={`flex-1 py-4 text-sm font-medium text-center transition-colors ${
               !isLogin ? 'bg-white text-blue-600 border-b-2 border-blue-600' : 'bg-gray-50 text-gray-500 hover:text-gray-700'
             }`}
-            onClick={() => setIsLogin(false)}
+            onClick={() => { setIsLogin(false); setError(''); }}
           >
             註冊
           </button>
@@ -110,7 +106,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
                         fill="#EA4335"
                     />
                 </svg>
-                {loading ? '登入中...' : '使用 Google 帳號登入'}
+                {loading ? '連接 Google 中...' : '使用 Google 帳號登入'}
              </button>
              
              <div className="relative my-6">
@@ -124,6 +120,13 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
         </div>
 
         <form onSubmit={handleSubmit} className="px-8 pb-8 pt-2 space-y-6">
+          {error && (
+            <div className="bg-red-50 text-red-600 text-sm p-3 rounded-lg flex items-center">
+                <AlertCircle size={16} className="mr-2 shrink-0"/>
+                {error}
+            </div>
+          )}
+
           {!isLogin && (
             <Input
               label="暱稱"
@@ -131,7 +134,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
               placeholder="您的稱呼"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              required
+              required={!isLogin}
             />
           )}
           
@@ -156,10 +159,17 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
           <div className="pt-2">
             <Button
               type="submit"
-              className="w-full h-11"
+              className="w-full h-11 relative"
               disabled={loading}
             >
-              {loading ? '處理中...' : isLogin ? '進入看板' : '建立帳戶'}
+              {loading ? (
+                  <span className="flex items-center gap-2">
+                      <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                      處理中...
+                  </span>
+              ) : (
+                  isLogin ? '進入看板' : '建立帳戶'
+              )}
             </Button>
           </div>
 

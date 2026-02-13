@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   DndContext,
   DragOverlay,
@@ -30,6 +30,7 @@ import {
 import { Button } from './Button';
 import { createPortal } from 'react-dom';
 import { cn, isOverdue, isToday, getPriorityWeight, isCriticalTask, getWeekRange } from '../utils';
+import { api } from '../services';
 
 // Column Component (Modified for unified usage)
 interface ColumnProps {
@@ -54,7 +55,7 @@ const Column: React.FC<ColumnProps> = ({ column, tasks, onAddTask, onCardClick, 
       // Desktop: Fixed width, Mobile: Full width
       !isMobile ? "w-80 shrink-0" : "w-full"
     )}>
-      {/* Column Header - Hide on mobile as the Tab bar indicates context, or keep minimal */}
+      {/* Column Header */}
       {!isMobile && (
         <div className="flex items-center justify-between mb-3 px-1">
           <div className="flex items-center gap-2">
@@ -188,10 +189,9 @@ type FilterPriority = 'all' | 'urgent' | 'important' | 'normal';
 type MobileTab = 'todo' | 'doing' | 'done' | 'archived';
 
 export const Board: React.FC<BoardProps> = ({ user, onLogout }) => {
-  const [tasks, setTasks] = useState<Task[]>(() => {
-    const saved = localStorage.getItem(`micro_kanban_tasks_${user.id}`);
-    return saved ? JSON.parse(saved) : [];
-  });
+  // Replace direct localStorage state with async loading pattern
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const [isTasksLoading, setIsTasksLoading] = useState(true);
   
   const [activeTask, setActiveTask] = useState<Task | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -201,13 +201,6 @@ export const Board: React.FC<BoardProps> = ({ user, onLogout }) => {
   
   // Mobile Navigation State
   const [mobileTab, setMobileTab] = useState<MobileTab>('todo');
-
-  // Effect to default open dashboard only on large screens
-  React.useEffect(() => {
-    if (window.innerWidth >= 1024) {
-      setShowDashboard(true);
-    }
-  }, []);
 
   const [filterTime, setFilterTime] = useState<FilterTime>('all');
   const [filterPriority, setFilterPriority] = useState<FilterPriority>('all');
@@ -221,24 +214,66 @@ export const Board: React.FC<BoardProps> = ({ user, onLogout }) => {
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
   );
 
-  React.useEffect(() => {
-    localStorage.setItem(`micro_kanban_tasks_${user.id}`, JSON.stringify(tasks));
-  }, [tasks, user.id]);
+  // Load Tasks from API on Mount
+  useEffect(() => {
+    const loadTasks = async () => {
+      setIsTasksLoading(true);
+      try {
+        const fetchedTasks = await api.tasks.list(user.id);
+        setTasks(fetchedTasks);
+      } catch (error) {
+        console.error("Failed to load tasks", error);
+      } finally {
+        setIsTasksLoading(false);
+      }
+    };
+    loadTasks();
+  }, [user.id]);
+
+  // Effect to default open dashboard only on large screens
+  useEffect(() => {
+    if (window.innerWidth >= 1024) {
+      setShowDashboard(true);
+    }
+  }, []);
 
   const handleAddTask = () => { setEditingTask(null); setIsModalOpen(true); };
   const handleEditTask = (task: Task) => { setEditingTask(task); setIsModalOpen(true); };
   
-  const handleSaveTask = (task: Task) => {
+  const handleSaveTask = async (task: Task) => {
+    // Optimistic UI Update (Update UI immediately)
+    const oldTasks = [...tasks];
     setTasks((prev) => {
       const exists = prev.find((t) => t.id === task.id);
       return exists ? prev.map((t) => (t.id === task.id ? task : t)) : [...prev, task];
     });
+
+    // API Call
+    try {
+      await api.tasks.save(user.id, task);
+    } catch (e) {
+      // Revert on error
+      console.error("Save failed", e);
+      setTasks(oldTasks);
+      alert("儲存失敗，請檢查網路連線");
+    }
   };
 
-  const handleDeleteTask = (taskId: string) => { setTasks((prev) => prev.filter((t) => t.id !== taskId)); };
+  const handleDeleteTask = async (taskId: string) => { 
+      const oldTasks = [...tasks];
+      setTasks((prev) => prev.filter((t) => t.id !== taskId)); 
+      
+      try {
+          await api.tasks.delete(user.id, taskId);
+      } catch (e) {
+          console.error("Delete failed", e);
+          setTasks(oldTasks);
+      }
+  };
   
-  const handleArchiveTask = (task: Task) => {
-    setTasks((prev) => prev.map(t => t.id === task.id ? { ...t, isArchived: true } : t));
+  const handleArchiveTask = async (task: Task) => {
+    const updatedTask = { ...task, isArchived: true };
+    await handleSaveTask(updatedTask);
   };
 
   const onDragStart = (event: DragStartEvent) => {
@@ -289,7 +324,16 @@ export const Board: React.FC<BoardProps> = ({ user, onLogout }) => {
     }
   };
 
-  const onDragEnd = () => setActiveTask(null);
+  const onDragEnd = async () => {
+      setActiveTask(null);
+      // Persist the reordered list/status changes
+      // We send the whole list to simulate a batch update or order sync
+      try {
+        await api.tasks.batchUpdate(user.id, tasks);
+      } catch(e) {
+          console.error("Sync order failed", e);
+      }
+  };
 
   const visibleTasks = useMemo(() => {
     let filtered = tasks.filter(t => !t.isArchived);
@@ -340,7 +384,7 @@ export const Board: React.FC<BoardProps> = ({ user, onLogout }) => {
           </div>
         </div>
 
-        {/* Filter Controls (Visible on Desktop and Non-Archived Mobile Tabs) */}
+        {/* Filter Controls */}
         {mobileTab !== 'archived' && (
             <div className="flex items-center gap-2 md:gap-3 flex-1 justify-end md:mr-6">
                 <div className="flex items-center bg-gray-100/80 rounded-lg p-0.5 border border-gray-200 max-w-[110px] md:max-w-none">
@@ -400,7 +444,6 @@ export const Board: React.FC<BoardProps> = ({ user, onLogout }) => {
             <LogOut size={18} />
           </Button>
           
-          {/* Dashboard Toggle (Desktop Only) */}
           <button 
              onClick={() => setShowDashboard(!showDashboard)}
              className={cn(
@@ -420,6 +463,16 @@ export const Board: React.FC<BoardProps> = ({ user, onLogout }) => {
         {/* Unified Main View */}
         <main className="flex-1 overflow-x-auto overflow-y-hidden bg-white/50 relative">
             
+            {/* Loading Overlay */}
+            {isTasksLoading && (
+                <div className="absolute inset-0 z-50 flex items-center justify-center bg-white/60 backdrop-blur-sm">
+                    <div className="flex flex-col items-center gap-3">
+                        <Loader size={32} className="text-blue-600 animate-spin" />
+                        <span className="text-sm text-gray-500 font-medium">資料同步中...</span>
+                    </div>
+                </div>
+            )}
+
             {/* Desktop View: 3 Columns side-by-side */}
             <div className="hidden md:flex h-full gap-4 p-4 lg:p-6 min-w-max">
                  <DndContext
@@ -457,8 +510,6 @@ export const Board: React.FC<BoardProps> = ({ user, onLogout }) => {
                 {mobileTab === 'archived' ? (
                     <MobileArchiveView tasks={archivedTasks} />
                 ) : (
-                    // We wrap mobile list in DndContext too so local sorting works, 
-                    // though cross-tab dragging is disabled by UI nature
                     <DndContext
                         sensors={sensors}
                         collisionDetection={closestCorners}
@@ -494,7 +545,7 @@ export const Board: React.FC<BoardProps> = ({ user, onLogout }) => {
 
         </main>
 
-        {/* Right Dashboard Panel (Desktop Only) */}
+        {/* Right Dashboard Panel */}
         <div 
             className={cn(
                 "hidden md:block bg-white border-l border-gray-200 transition-all duration-300 ease-in-out shadow-xl z-30",
@@ -511,7 +562,7 @@ export const Board: React.FC<BoardProps> = ({ user, onLogout }) => {
         </div>
       </div>
 
-      {/* Mobile Bottom Navigation Bar */}
+      {/* Mobile Bottom Navigation */}
       <nav className="md:hidden fixed bottom-0 w-full bg-white border-t border-gray-200 flex justify-around items-center h-16 pb-safe z-40 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)]">
         <button 
             onClick={() => setMobileTab('todo')}
@@ -543,7 +594,7 @@ export const Board: React.FC<BoardProps> = ({ user, onLogout }) => {
         </button>
       </nav>
 
-      {/* Floating Action Button (Only on Todo/Doing Mobile Tabs) */}
+      {/* FAB */}
       {(mobileTab === 'todo' || mobileTab === 'doing') && (
           <div className="fixed bottom-20 right-5 md:hidden z-30 animate-in zoom-in duration-200">
             <button
@@ -562,13 +613,11 @@ export const Board: React.FC<BoardProps> = ({ user, onLogout }) => {
         onDelete={handleDeleteTask}
         initialTask={editingTask}
         userId={user.id}
-        // If adding new task, default status matches current mobile tab (if valid), else 'todo'
         defaultStatus={
             (editingTask ? undefined : (mobileTab === 'doing' ? 'doing' : 'todo'))
         }
       />
 
-      {/* Archive Modal (Desktop Only) */}
       <ArchiveModal 
         isOpen={isArchiveModalOpen}
         onClose={() => setIsArchiveModalOpen(false)}
