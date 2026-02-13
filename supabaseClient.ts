@@ -7,7 +7,7 @@ const SUPABASE_URL = 'https://your-project-url.supabase.co';
 const SUPABASE_ANON_KEY = 'your-anon-key';
 
 // 檢查是否已設定 (用來控制 App 顯示設定畫面)
-export const isConfigured = SUPABASE_URL !== 'https://your-project-url.supabase.co' && SUPABASE_ANON_KEY !== 'your-anon-key';
+export const isConfigured = SUPABASE_URL !== 'https://mcnxtcomzzcuwriwlbky.supabase.co' && SUPABASE_ANON_KEY !== 'sb_publishable_fgrU9hL0l_ltcGTLCyasVg_VzrnuaBb';
 
 if (!isConfigured) {
   console.warn('⚠️ Supabase 尚未設定！請在 supabaseClient.ts 中填入你的 URL 和 Key。');
