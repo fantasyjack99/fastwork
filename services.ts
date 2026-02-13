@@ -15,10 +15,11 @@ const mapFromDb = (item: any): Task => ({
   color: item.color,
   status: item.status,
   // 優先使用 snake_case，若無則嘗試 camelCase (相容性)
-  dueDate: item.due_date || item.dueDate,
+  // 若資料庫為 null，轉回空字串以符合 TypeScript 定義
+  dueDate: item.due_date || item.dueDate || '',
   userId: item.user_id || item.userId,
-  createdAt: item.created_at || item.createdAt,
-  completedAt: item.completed_at || item.completedAt,
+  createdAt: item.created_at || item.createdAt || '',
+  completedAt: item.completed_at || item.completedAt || undefined, // undefined for optional
   isArchived: item.is_archived ?? item.isArchived ?? false,
 });
 
@@ -30,10 +31,11 @@ const mapToDb = (task: Task) => ({
   category: task.category,
   color: task.color,
   status: task.status,
-  due_date: task.dueDate,
+  // [Fix] 日期欄位若是空字串，必須轉為 null，否則 Postgres Timestamp 格式會報錯 (invalid input syntax)
+  due_date: task.dueDate || null,
   user_id: task.userId,
-  created_at: task.createdAt,
-  completed_at: task.completedAt,
+  created_at: task.createdAt || null,
+  completed_at: task.completedAt || null,
   is_archived: task.isArchived
 });
 
