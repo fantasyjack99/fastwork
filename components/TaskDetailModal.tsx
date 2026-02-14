@@ -81,7 +81,7 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
     e.preventDefault();
     if (!task || !newComment.trim()) return;
 
-    const comment = await commentsApi.add(task.id, userId, newComment.trim());
+    const comment = await commentsApi.add(task.id, userId, userName, newComment.trim());
     if (comment) {
       setComments(prev => [...prev, comment]);
       setNewComment('');

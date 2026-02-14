@@ -268,12 +268,13 @@ export const api = {
     },
 
     // Add a comment
-    add: async (taskId: string, userId: string, content: string): Promise<Comment | null> => {
+    add: async (taskId: string, userId: string, authorName: string, content: string): Promise<Comment | null> => {
       const { data, error } = await supabase
         .from('task_comments')
         .insert({
           task_id: taskId,
           user_id: userId,
+          author_name: authorName,
           content,
         })
         .select(`
@@ -281,7 +282,8 @@ export const api = {
           content,
           created_at,
           user_id,
-          profiles:user_id (name, avatar_url)
+          author_name,
+          profiles:user_id (avatar_url)
         `)
         .single()
       
@@ -294,7 +296,7 @@ export const api = {
         id: data.id,
         task_id: taskId,
         user_id: data.user_id,
-        author_name: data.profiles?.name || 'Unknown',
+        author_name: data.author_name || 'Unknown',
         avatar_url: data.profiles?.avatar_url || null,
         content: data.content,
         created_at: data.created_at,
