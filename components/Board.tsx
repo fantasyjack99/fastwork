@@ -31,7 +31,7 @@ import {
 import { Button } from './Button';
 import { createPortal } from 'react-dom';
 import { cn, isOverdue, isToday, getPriorityWeight, isCriticalTask, getWeekRange } from '../utils';
-import { tasks as tasksApi, comments as commentsApi, supabase } from '../services';
+import { api, supabase } from '../services';
 
 // Column Component (Modified for unified usage)
 interface ColumnProps {
@@ -221,7 +221,7 @@ export const Board: React.FC<BoardProps> = ({ user, onLogout }) => {
     const loadTasks = async () => {
       setIsTasksLoading(true);
       try {
-        const fetchedTasks = await tasksApi.list(user.id);
+        const fetchedTasks = await api.tasks.list(user.id);
         setTasks(fetchedTasks);
       } catch (error) {
         console.error("Failed to load tasks", error);
@@ -253,12 +253,13 @@ export const Board: React.FC<BoardProps> = ({ user, onLogout }) => {
 
     // API Call
     try {
-      await tasksApi.save(user.id, task);
-    } catch (e) {
+      await api.tasks.save(user.id, task);
+    } catch (e: any) {
       // Revert on error
       console.error("Save failed", e);
       setTasks(oldTasks);
-      alert("儲存失敗，請檢查網路連線");
+      // Show specific error to user
+      alert(`儲存失敗: ${e.message || '資料庫連線錯誤，請檢查 Supabase 設定。'}`);
     }
   };
 
@@ -267,10 +268,11 @@ export const Board: React.FC<BoardProps> = ({ user, onLogout }) => {
       setTasks((prev) => prev.filter((t) => t.id !== taskId)); 
       
       try {
-          await tasksApi.delete(user.id, taskId);
-      } catch (e) {
+          await api.tasks.delete(user.id, taskId);
+      } catch (e: any) {
           console.error("Delete failed", e);
           setTasks(oldTasks);
+          alert(`刪除失敗: ${e.message || '資料庫連線錯誤。'}`);
       }
   };
   
@@ -332,7 +334,7 @@ export const Board: React.FC<BoardProps> = ({ user, onLogout }) => {
       // Persist the reordered list/status changes
       // We send the whole list to simulate a batch update or order sync
       try {
-        await tasksApi.batchUpdate(user.id, tasks);
+        await api.tasks.batchUpdate(user.id, tasks);
       } catch(e) {
           console.error("Sync order failed", e);
       }

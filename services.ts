@@ -1,15 +1,27 @@
-import { createClient } from '@supabase/supabase-js'
-import type { Task, User } from './types'
+import { Task, User } from './types';
+import { supabase } from './supabaseClient';
 
-// Environment variables
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
+// ------------------------------------------------------------------
+// 資料庫欄位名稱轉換 (Mapping Layer)
+// 解決 Frontend (camelCase) 與 Database (snake_case) 命名不一致的問題
+// ------------------------------------------------------------------
 
-// Create Supabase client
-export const supabase = createClient(
-  supabaseUrl || 'https://example.supabase.co',
-  supabaseAnonKey || 'example-key'
-)
+// 將資料庫格式 (snake_case) 轉為 應用程式格式 (camelCase)
+const mapFromDb = (item: any): Task => ({
+  id: item.id,
+  title: item.title,
+  content: item.content,
+  category: item.category,
+  color: item.color,
+  status: item.status,
+  // 優先使用 snake_case，若無則嘗試 camelCase (相容性)
+  // 若資料庫為 null，轉回空字串以符合 TypeScript 定義
+  dueDate: item.due_date || item.dueDate || '',
+  userId: item.user_id || item.userId,
+  createdAt: item.created_at || item.createdAt || '',
+  completedAt: item.completed_at || item.completedAt || undefined, // undefined for optional
+  isArchived: item.is_archived ?? item.isArchived ?? false,
+});
 
 // Types
 export interface Comment {
@@ -22,279 +34,274 @@ export interface Comment {
   created_at: string;
 }
 
-// Auth helpers
-export const auth = {
-  // Get current user
-  getUser: async (): Promise<User | null> => {
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return null
+// 將 應用程式格式 (camelCase) 轉為 資料庫格式 (snake_case)
+const mapToDb = (task: Task) => ({
+  id: task.id,
+  title: task.title,
+  content: task.content,
+  category: task.category,
+  color: task.color,
+  status: task.status,
+  // [Fix] 日期欄位若是空字串，必須轉為 null，否則 Postgres Timestamp 格式會報錯 (invalid input syntax)
+  due_date: task.dueDate || null,
+  user_id: task.userId,
+  created_at: task.createdAt || null,
+  completed_at: task.completedAt || null,
+  is_archived: task.isArchived
+});
+
+// ------------------------------------------------------------------
+
+export const api = {
+  auth: {
+    // Check if user is already logged in via Supabase Session
+    getSession: async (): Promise<User | null> => {
+      try {
+        const { data: { session }, error } = await supabase.auth.getSession();
+        if (error) throw error;
+        
+        if (!session?.user) return null;
+
+        return {
+          id: session.user.id,
+          email: session.user.email || '',
+          name: session.user.user_metadata?.name || session.user.email?.split('@')[0] || 'User',
+        };
+      } catch (err) {
+        console.warn("Session check failed", err);
+        return null;
+      }
+    },
+
+    // Login with Supabase
+    login: async (email: string, password: string): Promise<User> => {
+      try {
+        const { data, error } = await supabase.auth.signInWithPassword({
+          email,
+          password,
+        });
+
+        if (error) throw error;
+        if (!data.user) throw new Error('Login failed');
+
+        return {
+          id: data.user.id,
+          email: data.user.email || '',
+          name: data.user.user_metadata?.name || email.split('@')[0],
+        };
+      } catch (err: any) {
+        if (err.message === 'Failed to fetch') {
+           throw new Error('無法連接伺服器 (Failed to fetch)。請檢查 supabaseClient.ts 中的網址是否正確填入。');
+        }
+        throw err;
+      }
+    },
+
+    // Login with Google (OAuth)
+    loginWithGoogle: async (): Promise<void> => {
+      try {
+        const { error } = await supabase.auth.signInWithOAuth({
+          provider: 'google',
+          options: {
+            redirectTo: window.location.origin, 
+          }
+        });
+        if (error) throw error;
+      } catch (err: any) {
+        if (err.message === 'Failed to fetch') {
+            throw new Error('無法連接伺服器。請檢查 supabaseClient.ts 設定。');
+         }
+         throw err;
+      }
+    },
+
+    // Register with Supabase
+    register: async (name: string, email: string, password: string): Promise<User | null> => {
+      try {
+        const { data, error } = await supabase.auth.signUp({
+          email,
+          password,
+          options: {
+            data: {
+              name: name,
+            },
+          },
+        });
+
+        if (error) throw error;
+        
+        if (data.user && !data.session) {
+          return null; 
+        }
+
+        if (!data.user) throw new Error('Registration failed');
+
+        return {
+          id: data.user.id,
+          email: data.user.email || '',
+          name: name,
+        };
+      } catch (err: any) {
+        if (err.message === 'Failed to fetch') {
+            throw new Error('無法連接伺服器。請檢查 supabaseClient.ts 設定。');
+         }
+         throw err;
+      }
+    },
+
+    // Logout
+    logout: async () => {
+      await supabase.auth.signOut();
+    },
+  },
+
+  tasks: {
+    // Get all tasks for a user
+    list: async (userId: string): Promise<Task[]> => {
+      const { data, error } = await supabase
+        .from('tasks')
+        .select('*')
+        .eq('user_id', userId)
+        .eq('is_archived', false)
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        console.error('Error fetching tasks:', error);
+        return [];
+      }
+
+      // 將回傳的資料轉換回 App 格式
+      return (data || []).map(mapFromDb);
+    },
+
+    // Get archived tasks
+    listArchived: async (userId: string): Promise<Task[]> => {
+      const { data, error } = await supabase
+        .from('tasks')
+        .select('*')
+        .eq('user_id', userId)
+        .eq('is_archived', true)
+        .order('completed_at', { ascending: false });
     
-    // Get user profile
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('*')
-      .eq('id', user.id)
-      .single()
-    
-    return {
-      id: user.id,  // Always use the auth user ID (UUID)
-      email: profile?.email || user.email || '',
-      name: profile?.name || user.user_metadata?.name || user.email?.split('@')[0] || 'User',
+      if (error) {
+        console.error('Error fetching archived tasks:', error);
+        return [];
+      }
+      
+      return (data || []).map(mapFromDb);
+    },
+
+    // Create or Update a task (Upsert)
+    save: async (userId: string, task: Task): Promise<Task> => {
+      // 轉換成資料庫格式，並確保 user_id 正確
+      const dbTask = mapToDb({ ...task, userId });
+
+      const { data, error } = await supabase
+        .from('tasks')
+        .upsert(dbTask)
+        .select()
+        .single();
+
+      if (error) throw error;
+      // 將回傳的新資料轉換回 App 格式
+      return mapFromDb(data);
+    },
+
+    // Delete a task
+    delete: async (userId: string, taskId: string): Promise<void> => {
+      const { error } = await supabase
+        .from('tasks')
+        .delete()
+        .eq('id', taskId)
+        .eq('user_id', userId); // 使用 snake_case (user_id) 確保安全性
+
+      if (error) throw error;
+    },
+
+    // Batch update
+    batchUpdate: async (userId: string, tasks: Task[]): Promise<Task[]> => {
+      if (tasks.length === 0) return [];
+      
+      // 批量轉換
+      const dbTasks = tasks.map(t => mapToDb({ ...t, userId }));
+
+      const { data, error } = await supabase
+        .from('tasks')
+        .upsert(dbTasks)
+        .select();
+
+      if (error) throw error;
+      return (data || []).map(mapFromDb);
     }
   },
 
-  // Login with email/password
-  login: async (email: string, password: string): Promise<User> => {
-    const { data: { user, session }, error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    })
-    
-    if (error) throw new Error(error.message)
-    if (!user) throw new Error('No user returned')
-    
-    // Get profile
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('*')
-      .eq('id', user.id)
-      .single()
-    
-    return {
-      id: user.id,  // Always use the auth user ID (UUID)
-      email: profile?.email || user.email || email,
-      name: profile?.name || user.user_metadata?.name || user.email?.split('@')[0] || 'User',
-    }
-  },
-
-  // Register with email/password
-  register: async (name: string, email: string, password: string): Promise<User> => {
-    const { data: { user, session }, error } = await supabase.auth.signUp({
-      email,
-      password,
-      options: {
-        data: {
-          name,
-        },
-      },
-    })
-    
-    if (error) throw new Error(error.message)
-    if (!user) throw new Error('No user returned')
-    
-    // Profile should be auto-created by trigger, but ensure it
-    const { error: profileError } = await supabase
-      .from('profiles')
-      .upsert({
-        id: user.id,
-        email,
-        name,
-      })
-      .select()
-      .single()
-    
-    if (profileError) console.warn('Profile creation warning:', profileError)
-    
-    return {
-      id: user.id,
-      email,
-      name,
-    }
-  },
-
-  // Logout
-  logout: async () => {
-    await supabase.auth.signOut()
-  },
-}
-
-// Tasks API
-export const tasks = {
-  // Get all tasks for current user
-  list: async (userId: string): Promise<Task[]> => {
-    console.log('Fetching tasks for userId:', userId)
-    const { data, error } = await supabase
-      .from('tasks')
-      .select('*')
-      .eq('user_id', userId)
-      .eq('is_archived', false)
-      .order('created_at', { ascending: false })
-    
-    if (error) {
-      console.error('Supabase error:', error)
-      throw new Error(error.message)
-    }
-    
-    return (data || []).map(task => ({
-      id: task.id,
-      title: task.title,
-      content: task.content || '',
-      category: task.category,
-      color: task.color,
-      status: task.status,
-      dueDate: task.due_date,
-      userId: task.user_id,
-      createdAt: task.created_at,
-      completedAt: task.completed_at,
-      isArchived: task.is_archived,
-    }))
-  },
-
-  // Save task (create or update)
-  save: async (userId: string, task: Task): Promise<Task> => {
-    console.log('Saving task for userId:', userId, 'task:', task.id)
-    const taskData = {
-      id: task.id,
-      user_id: userId,  // Use the proper UUID
-      title: task.title,
-      content: task.content || null,
-      category: task.category,
-      color: task.color,
-      status: task.status,
-      due_date: task.dueDate || null,
-      completed_at: task.completedAt || null,
-      is_archived: task.isArchived || false,
-    }
-    
-    console.log('Task data:', taskData)
-    const { data, error } = await supabase
-      .from('tasks')
-      .upsert(taskData)
-      .select()
-      .single()
-    
-    if (error) {
-      console.error('Supabase save error:', error)
-      throw new Error(error.message)
-    }
-    
-    return {
-      id: data.id,
-      title: data.title,
-      content: data.content || '',
-      category: data.category,
-      color: data.color,
-      status: data.status,
-      dueDate: data.due_date,
-      userId: data.user_id,
-      createdAt: data.created_at,
-      completedAt: data.completed_at,
-      isArchived: data.is_archived,
-    }
-  },
-
-  // Delete task
-  delete: async (userId: string, taskId: string): Promise<void> => {
-    const { error } = await supabase
-      .from('tasks')
-      .delete()
-      .eq('id', taskId)
-      .eq('user_id', userId)
-    
-    if (error) throw new Error(error.message)
-  },
-
-  // Archive task
-  archive: async (userId: string, taskId: string): Promise<void> => {
-    const { error } = await supabase
-      .from('tasks')
-      .update({ is_archived: true })
-      .eq('id', taskId)
-      .eq('user_id', userId)
-    
-    if (error) throw new Error(error.message)
-  },
-
-  // Get archived tasks
-  listArchived: async (userId: string): Promise<Task[]> => {
-    const { data, error } = await supabase
-      .from('tasks')
-      .select('*')
-      .eq('user_id', userId)
-      .eq('is_archived', true)
-      .order('completed_at', { ascending: false })
-    
-    if (error) throw new Error(error.message)
-    
-    return (data || []).map(task => ({
-      id: task.id,
-      title: task.title,
-      content: task.content || '',
-      category: task.category,
-      color: task.color,
-      status: task.status,
-      dueDate: task.due_date,
-      userId: task.user_id,
-      createdAt: task.created_at,
-      completedAt: task.completed_at,
-      isArchived: task.is_archived,
-    }))
-  },
-}
-
-// Comments API
-export const comments = {
-  // Get comments for a task
-  list: async (taskId: string): Promise<Comment[]> => {
-    const { data, error } = await supabase
-      .from('task_comments')
-      .select(`
-        id,
-        content,
-        created_at,
-        user_id,
-        profiles:user_id (name, avatar_url)
-      `)
-      .eq('task_id', taskId)
-      .order('created_at', { ascending: true })
-    
-    if (error) {
-      console.error('Supabase comments error:', error)
-      return []
-    }
-    
-    return (data || []).map(comment => ({
-      id: comment.id,
-      task_id: taskId,
-      user_id: comment.user_id,
-      author_name: comment.profiles?.name || 'Unknown',
-      avatar_url: comment.profiles?.avatar_url || null,
-      content: comment.content,
-      created_at: comment.created_at,
-    }))
-  },
-
-  // Add a comment
-  add: async (taskId: string, userId: string, content: string): Promise<Comment | null> => {
-    const { data, error } = await supabase
-      .from('task_comments')
-      .insert({
+  // Comments API
+  comments: {
+    // Get comments for a task
+    list: async (taskId: string): Promise<Comment[]> => {
+      const { data, error } = await supabase
+        .from('task_comments')
+        .select(`
+          id,
+          content,
+          created_at,
+          user_id,
+          profiles:user_id (name, avatar_url)
+        `)
+        .eq('task_id', taskId)
+        .order('created_at', { ascending: true })
+      
+      if (error) {
+        console.error('Supabase comments error:', error)
+        return []
+      }
+      
+      return (data || []).map(comment => ({
+        id: comment.id,
         task_id: taskId,
-        user_id: userId,
-        content,
-      })
-      .select(`
-        id,
-        content,
-        created_at,
-        user_id,
-        profiles:user_id (name, avatar_url)
-      `)
-      .single()
-    
-    if (error) {
-      console.error('Supabase add comment error:', error)
-      return null
-    }
-    
-    return {
-      id: data.id,
-      task_id: taskId,
-      user_id: data.user_id,
-      author_name: data.profiles?.name || 'Unknown',
-      avatar_url: data.profiles?.avatar_url || null,
-      content: data.content,
-      created_at: data.created_at,
-    }
+        user_id: comment.user_id,
+        author_name: comment.profiles?.name || 'Unknown',
+        avatar_url: comment.profiles?.avatar_url || null,
+        content: comment.content,
+        created_at: comment.created_at,
+      }))
+    },
+
+    // Add a comment
+    add: async (taskId: string, userId: string, content: string): Promise<Comment | null> => {
+      const { data, error } = await supabase
+        .from('task_comments')
+        .insert({
+          task_id: taskId,
+          user_id: userId,
+          content,
+        })
+        .select(`
+          id,
+          content,
+          created_at,
+          user_id,
+          profiles:user_id (name, avatar_url)
+        `)
+        .single()
+      
+      if (error) {
+        console.error('Supabase add comment error:', error)
+        return null
+      }
+      
+      return {
+        id: data.id,
+        task_id: taskId,
+        user_id: data.user_id,
+        author_name: data.profiles?.name || 'Unknown',
+        avatar_url: data.profiles?.avatar_url || null,
+        content: data.content,
+        created_at: data.created_at,
+      }
+    },
   },
-}
+};
+
+// Export supabase for realtime subscriptions
+export { supabase };
