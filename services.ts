@@ -11,6 +11,17 @@ export const supabase = createClient(
   supabaseAnonKey || 'example-key'
 )
 
+// Types
+export interface Comment {
+  id: string;
+  task_id: string;
+  user_id: string;
+  author_name: string;
+  content: string;
+  avatar_url: string | null;
+  created_at: string;
+}
+
 // Auth helpers
 export const auth = {
   // Get current user
@@ -218,5 +229,72 @@ export const tasks = {
       completedAt: task.completed_at,
       isArchived: task.is_archived,
     }))
+  },
+}
+
+// Comments API
+export const comments = {
+  // Get comments for a task
+  list: async (taskId: string): Promise<Comment[]> => {
+    const { data, error } = await supabase
+      .from('task_comments')
+      .select(`
+        id,
+        content,
+        created_at,
+        user_id,
+        profiles:user_id (name, avatar_url)
+      `)
+      .eq('task_id', taskId)
+      .order('created_at', { ascending: true })
+    
+    if (error) {
+      console.error('Supabase comments error:', error)
+      return []
+    }
+    
+    return (data || []).map(comment => ({
+      id: comment.id,
+      task_id: taskId,
+      user_id: comment.user_id,
+      author_name: comment.profiles?.name || 'Unknown',
+      avatar_url: comment.profiles?.avatar_url || null,
+      content: comment.content,
+      created_at: comment.created_at,
+    }))
+  },
+
+  // Add a comment
+  add: async (taskId: string, userId: string, content: string): Promise<Comment | null> => {
+    const { data, error } = await supabase
+      .from('task_comments')
+      .insert({
+        task_id: taskId,
+        user_id: userId,
+        content,
+      })
+      .select(`
+        id,
+        content,
+        created_at,
+        user_id,
+        profiles:user_id (name, avatar_url)
+      `)
+      .single()
+    
+    if (error) {
+      console.error('Supabase add comment error:', error)
+      return null
+    }
+    
+    return {
+      id: data.id,
+      task_id: taskId,
+      user_id: data.user_id,
+      author_name: data.profiles?.name || 'Unknown',
+      avatar_url: data.profiles?.avatar_url || null,
+      content: data.content,
+      created_at: data.created_at,
+    }
   },
 }

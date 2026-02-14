@@ -18,11 +18,12 @@ import {
   verticalListSortingStrategy,
   arrayMove,
 } from '@dnd-kit/sortable';
-import { Task, Column as ColumnType, User, TaskStatus, PRIORITY_CONFIG } from '../types';
+import { Task, Column as ColumnType, User, TaskStatus, PRIORITY_CONFIG, Comment } from '../types';
 import { TaskCard } from './TaskCard';
 import { TaskModal } from './TaskModal';
 import { ArchiveModal } from './ArchiveModal';
 import { Dashboard } from './Dashboard';
+import { TaskDetailModal } from './TaskDetailModal';
 import { 
   Plus, LogOut, Layout, Archive, Filter, ListFilter, 
   PanelRightClose, PanelRightOpen, ListTodo, Loader, CheckCircle2, History 
@@ -30,7 +31,7 @@ import {
 import { Button } from './Button';
 import { createPortal } from 'react-dom';
 import { cn, isOverdue, isToday, getPriorityWeight, isCriticalTask, getWeekRange } from '../utils';
-import { tasks as tasksApi } from '../services';
+import { tasks as tasksApi, comments as commentsApi, supabase } from '../services';
 
 // Column Component (Modified for unified usage)
 interface ColumnProps {
@@ -198,6 +199,7 @@ export const Board: React.FC<BoardProps> = ({ user, onLogout }) => {
   const [isArchiveModalOpen, setIsArchiveModalOpen] = useState(false);
   const [editingTask, setEditingTask] = useState<Task | null>(null);
   const [showDashboard, setShowDashboard] = useState(false);
+  const [viewingTask, setViewingTask] = useState<Task | null>(null);
   
   // Mobile Navigation State
   const [mobileTab, setMobileTab] = useState<MobileTab>('todo');
@@ -239,6 +241,7 @@ export const Board: React.FC<BoardProps> = ({ user, onLogout }) => {
 
   const handleAddTask = () => { setEditingTask(null); setIsModalOpen(true); };
   const handleEditTask = (task: Task) => { setEditingTask(task); setIsModalOpen(true); };
+  const handleViewTaskDetail = (task: Task) => { setViewingTask(task); };
   
   const handleSaveTask = async (task: Task) => {
     // Optimistic UI Update (Update UI immediately)
@@ -488,7 +491,7 @@ export const Board: React.FC<BoardProps> = ({ user, onLogout }) => {
                         column={col}
                         tasks={visibleTasks.filter((t) => t.status === col.id)}
                         onAddTask={handleAddTask}
-                        onCardClick={handleEditTask}
+                        onCardClick={handleViewTaskDetail}
                         onArchive={handleArchiveTask}
                         />
                     ))}
@@ -524,7 +527,7 @@ export const Board: React.FC<BoardProps> = ({ user, onLogout }) => {
                                 column={col}
                                 tasks={visibleTasks.filter((t) => t.status === col.id)}
                                 onAddTask={handleAddTask}
-                                onCardClick={handleEditTask}
+                                onCardClick={handleViewTaskDetail}
                                 onArchive={handleArchiveTask}
                                 isMobile={true}
                             />
@@ -622,6 +625,14 @@ export const Board: React.FC<BoardProps> = ({ user, onLogout }) => {
         isOpen={isArchiveModalOpen}
         onClose={() => setIsArchiveModalOpen(false)}
         tasks={archivedTasks}
+      />
+
+      <TaskDetailModal
+        isOpen={!!viewingTask}
+        onClose={() => setViewingTask(null)}
+        task={viewingTask}
+        userId={user.id}
+        userName={user.name}
       />
     </div>
   );
