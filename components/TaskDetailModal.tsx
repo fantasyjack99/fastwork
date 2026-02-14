@@ -105,9 +105,9 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
     });
   };
 
-  // Check if comment is from current user (Sabrina)
+  // Check if comment is from Sabrina (by name)
   const isMyComment = (comment: CommentType) => {
-    return comment.user_id === userId;
+    return comment.author_name === 'Sabrina';
   };
 
   return (
