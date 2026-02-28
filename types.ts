@@ -25,16 +25,6 @@ export interface User {
   name: string;
 }
 
-export interface Comment {
-  id: string;
-  task_id: string;
-  user_id: string;
-  author_name: string;
-  avatar_url: string | null;
-  content: string;
-  created_at: string;
-}
-
 export const PRIORITY_CONFIG = {
   normal: { label: '一般', color: '#22c55e', value: 'normal' },   // Green
   important: { label: '重要', color: '#eab308', value: 'important' }, // Yellow

@@ -23,17 +23,6 @@ const mapFromDb = (item: any): Task => ({
   isArchived: item.is_archived ?? item.isArchived ?? false,
 });
 
-// Types
-export interface Comment {
-  id: string;
-  task_id: string;
-  user_id: string;
-  author_name: string;
-  content: string;
-  avatar_url: string | null;
-  created_at: string;
-}
-
 // 將 應用程式格式 (camelCase) 轉為 資料庫格式 (snake_case)
 const mapToDb = (task: Task) => ({
   id: task.id,
@@ -161,9 +150,7 @@ export const api = {
       const { data, error } = await supabase
         .from('tasks')
         .select('*')
-        .eq('user_id', userId)
-        .eq('is_archived', false)
-        .order('created_at', { ascending: false });
+        .eq('user_id', userId); // 使用 snake_case (user_id) 查詢
 
       if (error) {
         console.error('Error fetching tasks:', error);
@@ -171,23 +158,6 @@ export const api = {
       }
 
       // 將回傳的資料轉換回 App 格式
-      return (data || []).map(mapFromDb);
-    },
-
-    // Get archived tasks
-    listArchived: async (userId: string): Promise<Task[]> => {
-      const { data, error } = await supabase
-        .from('tasks')
-        .select('*')
-        .eq('user_id', userId)
-        .eq('is_archived', true)
-        .order('completed_at', { ascending: false });
-    
-      if (error) {
-        console.error('Error fetching archived tasks:', error);
-        return [];
-      }
-      
       return (data || []).map(mapFromDb);
     },
 
@@ -234,76 +204,4 @@ export const api = {
       return (data || []).map(mapFromDb);
     }
   },
-
-  // Comments API
-  comments: {
-    // Get comments for a task
-    list: async (taskId: string): Promise<Comment[]> => {
-      const { data, error } = await supabase
-        .from('task_comments')
-        .select(`
-          id,
-          content,
-          created_at,
-          user_id,
-          profiles:user_id (name, avatar_url)
-        `)
-        .eq('task_id', taskId)
-        .order('created_at', { ascending: true })
-      
-      if (error) {
-        console.error('Supabase comments error:', error)
-        return []
-      }
-      
-      return (data || []).map(comment => ({
-        id: comment.id,
-        task_id: taskId,
-        user_id: comment.user_id,
-        author_name: comment.profiles?.name || 'Unknown',
-        avatar_url: comment.profiles?.avatar_url || null,
-        content: comment.content,
-        created_at: comment.created_at,
-      }))
-    },
-
-    // Add a comment
-    add: async (taskId: string, userId: string, authorName: string, content: string): Promise<Comment | null> => {
-      const { data, error } = await supabase
-        .from('task_comments')
-        .insert({
-          task_id: taskId,
-          user_id: userId,
-          author_name: authorName,
-          content,
-        })
-        .select(`
-          id,
-          content,
-          created_at,
-          user_id,
-          author_name,
-          profiles:user_id (avatar_url)
-        `)
-        .single()
-      
-      if (error) {
-        console.error('Supabase add comment error:', error)
-        return null
-      }
-      
-      return {
-        id: data.id,
-        task_id: taskId,
-        user_id: data.user_id,
-        author_name: data.author_name || 'Unknown',
-        avatar_url: data.profiles?.avatar_url || null,
-        content: data.content,
-        created_at: data.created_at,
-      }
-    },
-  },
 };
-
-// Export supabase for realtime subscriptions
-export { supabase };
